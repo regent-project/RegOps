@@ -1,0 +1,9 @@
+[Git]
+repo = "https://github.com/regent-project/RegOps.git"
+branch = "main"
+local_path = "./tmp"
+expected_state = "examples/state.yaml"
+
+[Behavior]
+mode = "Assess"
+interval_sec = 10
