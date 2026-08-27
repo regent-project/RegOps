@@ -2,8 +2,8 @@
 repo = "https://github.com/regent-project/RegOps.git"
 branch = "main"
 local_path = "./local_repo"
-expected_state = "examples/state.yaml"
+expected_state_path = "examples/state.yaml"
 
 [Behavior]
-mode = "Assess"
+mode = "Enforce"
 interval_sec = 10
