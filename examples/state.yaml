@@ -5,7 +5,7 @@ Attributes:
     Detail: !Apt
       Package: apache2
       State: Present
-  - Name: web server is always running
+  - Name: web service is always running
     Privilege: !WithSudo
     Timeout: 1
     Detail: !Service
