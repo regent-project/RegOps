@@ -1,7 +1,7 @@
 [Git]
 repo = "https://github.com/regent-project/RegOps.git"
 branch = "main"
-local_path = "./tmp"
+local_path = "./local_repo"
 expected_state = "examples/state.yaml"
 
 [Behavior]
