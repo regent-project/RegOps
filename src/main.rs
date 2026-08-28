@@ -42,8 +42,7 @@ async fn main() {
                     match remote.url(gix::remote::Direction::Fetch) {
                         Some(current_remote_url) => {
                             if current_remote_url.to_bstring() == config.git.repo.as_str() {
-                                // The current repository is the expected one. No initial cloning but a "git pull" required to get up to date.
-                                git_pull(&config.git.local_path).unwrap();
+                                // The current repository is the expected one. No initial cloning required.
                             } else {
                                 // The current repository is not the expected one.
                                 // There is ambiguity. Abort.
@@ -77,7 +76,9 @@ async fn main() {
     let mut managed_localhost = ManagedHostBuilder::new(
             "localhost", 
             "localhost", 
-            Some(ConnectionMethod::Localhost(TargetUser::current_user()))
+            Some(ConnectionMethod::Localhost(TargetUser::user_raw(
+                &config.regent.login, 
+            &config.regent.password)))
         )
         .build(None)
         .await

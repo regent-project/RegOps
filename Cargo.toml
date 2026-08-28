@@ -1,0 +1,18 @@
+[package]
+name = "regops"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gix = { version = "0.87.1", features = ["blocking-network-client", "blocking-http-transport-reqwest", "blocking-http-transport-reqwest-rust-tls"] }
+regent-sdk = {path = "../regent-sdk"}
+# regent-sdk = "0.9.4"
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["full"] }
+toml = "1.1.4"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+yaml_serde = "0.10.7"
+
+[profile.release]
+lto = true

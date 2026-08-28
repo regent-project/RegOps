@@ -4,6 +4,7 @@ use serde::Deserialize;
 #[serde(rename_all = "PascalCase")]
 pub struct RegOpsConfig {
     pub git: GitConfig,
+    pub regent: RegentConfig,
     pub behavior: BehaviorConfig,
 }
 
@@ -13,6 +14,12 @@ pub struct GitConfig {
     pub branch: String,
     pub local_path: String,
     pub expected_state_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RegentConfig {
+    pub login: String,
+    pub password: String,
 }
 
 #[derive(Debug, Deserialize)]
