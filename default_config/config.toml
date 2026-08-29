@@ -1,7 +1,8 @@
 [Git]
+# repo = "https://my.git.server/my/git/repository.git"
 branch = "main"
 local_path = "/tmp/regops"
-expected_state_path = "examples/state.yaml"
+expected_state_path = "expected_state.yaml"
 
 [Behavior]
 mode = "Enforce"
