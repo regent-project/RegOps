@@ -14,7 +14,7 @@ A lightweight GitOps agent written in Rust and built on top of the `regent-sdk` 
 graph TD
     Start([Start Agent Loop]) --> Pull[Pull Expected State YAML from Remote Git Repo]
     Pull --> Apply[Assess or Enforce Expected Configuration to Localhost]
-    Apply --> Sleep[Sleep for X Seconds (30 by default)]
+    Apply --> Sleep[Sleep for X Seconds]
     Sleep --> Start
 ```
 ## Contributing
