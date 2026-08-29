@@ -22,6 +22,7 @@ graph TD
 We welcome contributions and feedback ! This project needs help with:
 
 - **Linux distributions integration** : Right now we only ship for Debian-based distributions. We want to extend our CI to Fedora/CentOS/RHEL ecosystem, and others as well !
+- **Git authentication systems** : Right now we expect the git repository to be fully accessible. We want to handle modern git authentication mechanisms.
 
 **Join the conversation** [Regent Discord](https://discord.gg/2gxAW7uzsx)
 
