@@ -5,16 +5,49 @@ use std::process::exit;
 use std::{fs::File, io::Read};
 use tokio::time::{Duration, sleep};
 use tracing::{error, info, span, warn};
+use tracing_subscriber::{Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod git;
 
-use crate::config::{RegOpsConfig, RunningMode};
+use crate::config::{LogFormat, RegOpsConfig, RunningMode};
 use crate::git::{git_clone, git_pull};
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    // Getting configuration
+    let config = match File::open("examples/config.toml") {
+        // let mut configuration_file = match File::open("/etc/regops/config.toml") {
+        Ok(mut configuration_file) => {
+            let mut file_content: Vec<u8> = Vec::new();
+            if let Err(details) = configuration_file.read_to_end(&mut file_content) {
+                println!("Unable to read configuration file content ({})", details);
+                std::process::exit(1);
+            }
+            match toml::from_slice::<RegOpsConfig>(&file_content) {
+                Ok(valid_configuration) => valid_configuration,
+                Err(details) => {
+                    println!("Invalid configuration file content ({})", details);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(details) => {
+            println!("Unable to open configuration file ({})", details);
+            std::process::exit(1);
+        }
+    };
+
+    // Tracing initialization
+    let fmt_layer = match config.system_integration.log_format {
+        LogFormat::Raw => fmt::layer().boxed(),
+        LogFormat::Json => fmt::layer().json().boxed(),
+    };
+
+    tracing_subscriber::registry()
+        .with(config.system_integration.log_level.to_tracing_level())
+        .with(fmt_layer)
+        .init();
 
     // Get hostname first for global tracing span
     let hostname = match hostname::get() {
@@ -27,32 +60,23 @@ async fn main() {
     let global_span = span!(tracing::Level::INFO, "RegOps", ?hostname);
     let _guard = global_span.enter();
 
-    // Getting configuration
-    let mut configuration_file = File::open("/etc/regops/config.toml").unwrap();
-    let mut file_content: Vec<u8> = Vec::new();
-    configuration_file.read_to_end(&mut file_content).unwrap();
-
-    let config: RegOpsConfig = toml::from_slice(&file_content).unwrap();
-
     std::fs::create_dir_all(&config.git.local_path).unwrap();
 
     // Usefull for initial configuration. Right after installation, the user might not have configuration a git repository yet.
     let repository_url;
-    
+
     loop {
         match &config.git.repo {
-            Some(repo_url) => {
-                match gix::url::parse(repo_url) {
-                    Ok(repo_url) => {
-                        repository_url = repo_url;
-                        break;
-                    }
-                    Err(details) => {
-                        warn!(%details, "Invalid git repository");
-                        sleep(Duration::from_secs(10)).await;
-                    }
+            Some(repo_url) => match gix::url::parse(repo_url) {
+                Ok(repo_url) => {
+                    repository_url = repo_url;
+                    break;
                 }
-            }
+                Err(details) => {
+                    warn!(%details, "Invalid git repository");
+                    sleep(Duration::from_secs(10)).await;
+                }
+            },
             None => {
                 warn!("No repository url set yet");
                 sleep(Duration::from_secs(10)).await;
@@ -75,7 +99,8 @@ async fn main() {
                 Ok(remote) => {
                     match remote.url(gix::remote::Direction::Fetch) {
                         Some(current_remote_url) => {
-                            if current_remote_url.to_bstring() == config.git.repo.unwrap().as_str() {
+                            if current_remote_url.to_bstring() == config.git.repo.unwrap().as_str()
+                            {
                                 // The current repository is the expected one. No initial cloning required.
                             } else {
                                 // The current repository is not the expected one.
@@ -119,7 +144,6 @@ async fn main() {
     .await
     .unwrap();
     managed_localhost.connect().await.unwrap();
-
 
     // Entering the infinite loop
     loop {
