@@ -1,7 +1,7 @@
 [Git]
 # repo = "https://my.git.server/my/git/repository.git"
 branch = "main"
-local_path = "/tmp/regops"
+local_path = "/home/regops/repo"
 expected_state_path = "expected_state.yaml"
 
 [SystemIntegration]

@@ -9,9 +9,7 @@ Group=regops
 ExecStart=/usr/bin/regops
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=true
 ProtectSystem=full
-ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target
