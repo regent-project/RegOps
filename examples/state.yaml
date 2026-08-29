@@ -8,7 +8,7 @@ Attributes:
   - Name: web service is always running
     Privilege: !WithSudo
     Timeout: 5
-    Detail: !Apt
+    Detail: !Service
       Name: apache2
       State: Started
       Enabled: true
