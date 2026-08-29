@@ -1,14 +1,14 @@
 Attributes:
   - Name: web server is installed
-    Privilege: !WithSudoRs
-    Timeout: 10
-    Detail: !Pacman
-      Package: apache
+    Privilege: !WithSudo
+    Timeout: 30
+    Detail: !Apt
+      Package: apache2
       State: Present
   - Name: web service is always running
-    Privilege: !WithSudoRs
-    Timeout: 1
-    Detail: !Service
-      Name: httpd
+    Privilege: !WithSudo
+    Timeout: 5
+    Detail: !Apt
+      Name: apache2
       State: Started
       Enabled: true
