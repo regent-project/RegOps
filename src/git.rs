@@ -1,4 +1,5 @@
 use gix::{Repository, Url};
+use std::io::Write;
 use std::path::Path;
 use tracing::info;
 
@@ -7,11 +8,9 @@ pub fn git_clone(
     local_path: &str,
     branch: &str,
 ) -> Result<Repository, String> {
-    // Create local path if necessary
     std::fs::create_dir_all(local_path).map_err(|details| format!("{}", details))?;
 
     let local_path = Path::new(local_path);
-
     let ref_name = format!("refs/heads/{}", branch);
 
     let mut prepare_clone = gix::prepare_clone(repository_url, local_path)
@@ -27,6 +26,12 @@ pub fn git_clone(
         .main_worktree(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)
         .map_err(|details| format!("{}", details))?;
 
+    // Locally unset core.attributesfile to prevent gix from failing on missing global files
+    let config_path = repo.git_dir().join("config");
+    if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(&config_path) {
+        let _ = writeln!(file, "\n[core]\n    attributesFile = \"\"");
+    }
+
     let head: String = match repo.head_commit() {
         Ok(commit) => commit.id().to_string(),
         Err(_details) => "unknown".to_string(),
@@ -38,20 +43,22 @@ pub fn git_clone(
 }
 
 pub fn git_pull(local_path: &str) -> Result<(), String> {
-    
     // Inject local committer config before opening the repo so gix loads it into memory
     let config_path = Path::new(local_path).join(".git").join("config");
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&config_path) {
-        use std::io::Write;
-        let _ = writeln!(file, "\n[user]\n    name = Local RegOps user\n    email = user@local.invalid");
+        .open(&config_path)
+    {
+        let _ = writeln!(
+            file,
+            "\n[user]\n    name = Local User\n    email = user@local.invalid"
+        );
     }
 
     // Open the existing repository
     let repo = gix::open(local_path).map_err(|details| format!("{}", details))?;
-    
+
     // Get current HEAD and find the active local branch name
     let head = repo.head().map_err(|details| format!("{}", details))?;
     let local_branch_ref = head
@@ -66,12 +73,9 @@ pub fn git_pull(local_path: &str) -> Result<(), String> {
         std::str::from_utf8(branch_short_name).map_err(|details| format!("{}", details))?;
 
     // Determine the remote and tracking branch using Git config mapping
-    // Falls back to "origin" and the current branch name if no upstream is explicitly set
     let (remote_name, remote_branch_name) = repo
         .branch_remote_ref_name(local_branch_ref, gix::remote::Direction::Fetch)
         .and_then(|remote_ref| {
-            // Parse remote name and branch from the tracking reference if available
-            // e.g., refs/remotes/origin/main -> ("origin", "main")
             let name_str = remote_ref.unwrap().to_string();
             if let Some(stripped) = name_str.strip_prefix("refs/remotes/") {
                 let mut parts = stripped.splitn(2, '/');
