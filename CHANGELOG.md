@@ -1,4 +1,4 @@
-# Release v0.1.4
+# Release v0.1.5
 
 Initial release of RegOps agent.
 
