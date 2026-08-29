@@ -1,10 +1,10 @@
+use regent_sdk::ExpectedState;
+use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
+use regent_sdk::hosts::managed_host::ManagedHostBuilder;
 use std::process::exit;
 use std::{fs::File, io::Read};
 use tokio::time::{Duration, sleep};
-use tracing::{error, warn, info};
-use regent_sdk::hosts::managed_host::ManagedHostBuilder;
-use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
-use regent_sdk::ExpectedState;
+use tracing::{error, info, span, warn};
 
 mod config;
 mod git;
@@ -15,6 +15,17 @@ use crate::git::{git_clone, git_pull};
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
+
+    // Get hostname first for global tracing span
+    let hostname = match hostname::get() {
+        Ok(value) => value.to_string_lossy().to_string(),
+        Err(details) => {
+            warn!(%details, "Failed to get hostname");
+            "localhost".to_string()
+        }
+    };
+    let global_span = span!(tracing::Level::INFO, "RegOps", ?hostname);
+    let _guard = global_span.enter();
 
     // Getting configuration
     let mut configuration_file = File::open("examples/config.toml").unwrap();
@@ -73,16 +84,17 @@ async fn main() {
     }
 
     // Regent initialization
+
+    // We expect the user which runs RegOps to have required permissions with non-interactive sudo capability
+    // Granularity can be easily added through config.toml (add a "Regent" section)
     let mut managed_localhost = ManagedHostBuilder::new(
-            "localhost", 
-            "localhost", 
-            Some(ConnectionMethod::Localhost(TargetUser::user_raw(
-                &config.regent.login, 
-            &config.regent.password)))
-        )
-        .build(None)
-        .await
-        .unwrap();
+        &hostname,
+        "localhost",
+        Some(ConnectionMethod::Localhost(TargetUser::current_user())),
+    )
+    .build(None)
+    .await
+    .unwrap();
     managed_localhost.connect().await.unwrap();
 
 
@@ -92,13 +104,14 @@ async fn main() {
         git_pull(&config.git.local_path).unwrap();
 
         // Regent part
-        let expected_state_description = match std::fs::read_to_string(&config.git.expected_state_path) {
-            Ok(content) => content,
-            Err(details) => {
-                error!(?details, "Failed to get file content");
-                continue;
-            }
-        };
+        let expected_state_description =
+            match std::fs::read_to_string(&config.git.expected_state_path) {
+                Ok(content) => content,
+                Err(details) => {
+                    error!(?details, "Failed to get file content");
+                    continue;
+                }
+            };
         let expected_state = match ExpectedState::from_raw_yaml(&expected_state_description) {
             Ok(state) => state,
             Err(error_detail) => {
@@ -111,16 +124,15 @@ async fn main() {
             RunningMode::Assess => {
                 if let Err(details) = managed_localhost
                     .assess_compliance(&expected_state, true)
-                    .await {
-                        warn!(?details, "Failed to assess compliance");
-                    }
+                    .await
+                {
+                    warn!(?details, "Failed to assess compliance");
+                }
             }
             RunningMode::Enforce => {
-                if let Err(details) = managed_localhost
-                    .reach_compliance(&expected_state)
-                    .await {
-                        warn!(?details, "Failed to enforce compliance");
-                    }
+                if let Err(details) = managed_localhost.reach_compliance(&expected_state).await {
+                    warn!(?details, "Failed to enforce compliance");
+                }
             }
         }
 

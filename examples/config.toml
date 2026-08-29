@@ -4,10 +4,6 @@ branch = "main"
 local_path = "./local_repo"
 expected_state_path = "examples/state.yaml"
 
-[Regent]
-login = "USERNAME"
-password = "PASSWORD"
-
 [Behavior]
 mode = "Enforce"
 interval_sec = 10

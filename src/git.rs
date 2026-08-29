@@ -26,7 +26,7 @@ pub fn git_clone(
 
     let head: String = match repo.head_commit() {
         Ok(commit) => commit.id().to_string(),
-        Err(_details) => "unknown".to_string()
+        Err(_details) => "unknown".to_string(),
     };
 
     info!(head, "Initial cloning done");
@@ -130,7 +130,7 @@ pub fn git_pull(local_path: &str) -> Result<(), String> {
 
     let head: String = match repo.head_commit() {
         Ok(commit) => commit.id().to_string(),
-        Err(_details) => "unknown".to_string()
+        Err(_details) => "unknown".to_string(),
     };
 
     info!(head, "Refresh done");
