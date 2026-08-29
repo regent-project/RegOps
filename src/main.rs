@@ -29,7 +29,6 @@ async fn main() {
 
     // Getting configuration
     let mut configuration_file = File::open("/etc/regops/config.toml").unwrap();
-    let mut configuration_file = File::open("/etc/regops/config.toml").unwrap();
     let mut file_content: Vec<u8> = Vec::new();
     configuration_file.read_to_end(&mut file_content).unwrap();
 
