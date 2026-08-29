@@ -7,6 +7,9 @@ pub fn git_clone(
     local_path: &str,
     branch: &str,
 ) -> Result<Repository, String> {
+    // Create local path if necessary
+    std::fs::create_dir_all(local_path).map_err(|details| format!("{}", details))?;
+
     let local_path = Path::new(local_path);
 
     let ref_name = format!("refs/heads/{}", branch);
