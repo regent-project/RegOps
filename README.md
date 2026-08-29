@@ -16,7 +16,7 @@ graph TD
     Pull --> Apply[Assess or Enforce Expected Configuration to Localhost]
     Apply --> Sleep[Sleep for X Seconds (30 by default)]
     Sleep --> Start
-
+```
 ## Contributing
 
 We welcome contributions and feedback ! This project needs help with:
