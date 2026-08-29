@@ -10,5 +10,5 @@ Attributes:
     Timeout: 5
     Detail: !Service
       Name: apache2
-      State: Started
+      State: Stopped
       Enabled: true
