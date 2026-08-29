@@ -3,7 +3,7 @@ set -e
 
 # 1. Create a dedicated system user
 if ! getent passwd regops > /dev/null; then
-    useradd --system --no-create-home --shell /bin/false regops
+    useradd --system --shell /usr/bin/bash regops
 fi
 
 # 2. Configure non-interactive sudo permissions
