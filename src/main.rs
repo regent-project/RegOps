@@ -29,6 +29,7 @@ async fn main() {
 
     // Getting configuration
     let mut configuration_file = File::open("/etc/regops/config.toml").unwrap();
+    let mut configuration_file = File::open("/etc/regops/config.toml").unwrap();
     let mut file_content: Vec<u8> = Vec::new();
     configuration_file.read_to_end(&mut file_content).unwrap();
 
@@ -42,7 +43,7 @@ async fn main() {
     loop {
         match &config.git.repo {
             Some(repo_url) => {
-                match gix::url::parse(&config.git.repo) {
+                match gix::url::parse(repo_url) {
                     Ok(repo_url) => {
                         repository_url = repo_url;
                         break;
@@ -75,7 +76,7 @@ async fn main() {
                 Ok(remote) => {
                     match remote.url(gix::remote::Direction::Fetch) {
                         Some(current_remote_url) => {
-                            if current_remote_url.to_bstring() == config.git.repo.as_str() {
+                            if current_remote_url.to_bstring() == config.git.repo.unwrap().as_str() {
                                 // The current repository is the expected one. No initial cloning required.
                             } else {
                                 // The current repository is not the expected one.
