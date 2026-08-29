@@ -1,4 +1,4 @@
-# Release v0.1.2
+# Release v0.1.3
 
 Initial release of RegOps agent.
 
@@ -9,14 +9,15 @@ Initial release of RegOps agent.
 ## Installation
 Download the `.deb` and install it using:
 ```bash
-sudo apt install ./regops_0.1.0_amd64.deb
+sudo apt install ./regops_<version>_amd64.deb
 ```
 
 ## Configuration
 The configuration file is `/etc/regops/config.toml`.
 
 When first installing, you must set the repository in this file.
-When set, restart the regops service
+
+After every configuration change, restart the regops service to take it into account :
 ```bash
 systemctl restart regops
 ```
