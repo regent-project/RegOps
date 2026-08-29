@@ -4,6 +4,10 @@ branch = "main"
 local_path = "/tmp/regops"
 expected_state_path = "expected_state.yaml"
 
+[SystemIntegration]
+log_level = "Info"
+log_format = "Raw"
+
 [Behavior]
 mode = "Enforce"
 interval_sec = 30
