@@ -9,5 +9,5 @@ log_level = "Info"
 log_format = "Raw"
 
 [Behavior]
-mode = "Enforce"
+mode = "Assess"
 interval_sec = 30
