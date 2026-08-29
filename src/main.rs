@@ -152,7 +152,7 @@ async fn main() {
 
         // Regent part
         let expected_state_description =
-            match std::fs::read_to_string(&config.git.expected_state_path) {
+            match std::fs::read_to_string(format!("{}/{}", config.git.local_path, config.git.expected_state_path)) {
                 Ok(content) => content,
                 Err(details) => {
                     error!(?details, "Failed to get file content");
