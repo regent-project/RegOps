@@ -38,9 +38,20 @@ pub fn git_clone(
 }
 
 pub fn git_pull(local_path: &str) -> Result<(), String> {
+    
+    // Inject local committer config before opening the repo so gix loads it into memory
+    let config_path = Path::new(local_path).join(".git").join("config");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config_path) {
+        use std::io::Write;
+        let _ = writeln!(file, "\n[user]\n    name = Local RegOps user\n    email = user@local.invalid");
+    }
+
     // Open the existing repository
     let repo = gix::open(local_path).map_err(|details| format!("{}", details))?;
-
+    
     // Get current HEAD and find the active local branch name
     let head = repo.head().map_err(|details| format!("{}", details))?;
     let local_branch_ref = head
