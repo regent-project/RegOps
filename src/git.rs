@@ -133,7 +133,7 @@ pub fn git_pull(local_path: &str) -> Result<(), String> {
         Err(_details) => "unknown".to_string(),
     };
 
-    info!(head, "Refresh done");
+    info!(head, "Git pull done");
 
     Ok(())
 }

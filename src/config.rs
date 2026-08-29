@@ -9,7 +9,7 @@ pub struct RegOpsConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct GitConfig {
-    pub repo: String,
+    pub repo: Option<String>,
     pub branch: String,
     pub local_path: String,
     pub expected_state_path: String,

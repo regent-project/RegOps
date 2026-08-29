@@ -28,14 +28,37 @@ async fn main() {
     let _guard = global_span.enter();
 
     // Getting configuration
-    let mut configuration_file = File::open("examples/config.toml").unwrap();
+    let mut configuration_file = File::open("/etc/regops/config.toml").unwrap();
     let mut file_content: Vec<u8> = Vec::new();
     configuration_file.read_to_end(&mut file_content).unwrap();
 
     let config: RegOpsConfig = toml::from_slice(&file_content).unwrap();
 
     std::fs::create_dir_all(&config.git.local_path).unwrap();
-    let repository_url = gix::url::parse(&config.git.repo).unwrap();
+
+    // Usefull for initial configuration. Right after installation, the user might not have configuration a git repository yet.
+    let repository_url;
+    
+    loop {
+        match &config.git.repo {
+            Some(repo_url) => {
+                match gix::url::parse(&config.git.repo) {
+                    Ok(repo_url) => {
+                        repository_url = repo_url;
+                        break;
+                    }
+                    Err(details) => {
+                        warn!(%details, "Invalid git repository");
+                        sleep(Duration::from_secs(10)).await;
+                    }
+                }
+            }
+            None => {
+                warn!("No repository url set yet");
+                sleep(Duration::from_secs(10)).await;
+            }
+        }
+    }
 
     info!("Git repository : {:?}", repository_url);
     info!("Running mode : {:?}", config.behavior.mode);
