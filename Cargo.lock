@@ -3180,9 +3180,9 @@ dependencies = [
 
 [[package]]
 name = "regent-sdk"
-version = "0.9.5"
+version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c5297a557e2ced27165979100dcdb0caf5fdf86adf8b43c9b5ee7e1ddd97f4c"
+checksum = "7e8d3a7bfac99f6f66de30162c8fc0ebe0ad0cb8aa18b4ce066dee20e6086e81"
 dependencies = [
  "bytes",
  "chrono",
@@ -3228,7 +3228,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "regops"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "gix",
  "hostname",
