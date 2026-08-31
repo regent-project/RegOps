@@ -9,12 +9,29 @@ pub struct RegOpsConfig {
     pub system_integration: SystemIntegrationConfig,
 }
 
+impl RegOpsConfig {
+    pub fn authentication_mode(&self) -> GitAuthentication {
+        if let Some(authentication_config) = &self.git.auth {
+            if let Some(token_value) = &authentication_config.token {
+                return GitAuthentication::WithToken(token_value.clone());
+            }
+        }
+        GitAuthentication::None
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct GitConfig {
     pub repo: Option<String>,
     pub branch: String,
     pub local_path: String,
     pub expected_state_path: String,
+    pub auth: Option<AuthMode>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthMode {
+    token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,4 +77,9 @@ impl LogLevel {
             LogLevel::Error => LevelFilter::ERROR,
         }
     }
+}
+
+pub enum GitAuthentication {
+    None,
+    WithToken(String),
 }

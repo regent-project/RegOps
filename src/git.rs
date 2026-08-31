@@ -3,10 +3,35 @@ use std::io::Write;
 use std::path::Path;
 use tracing::info;
 
+use crate::config::GitAuthentication;
+
+fn token_credentials(
+    token: &str,
+) -> impl FnMut(gix::credentials::helper::Action) -> gix::credentials::protocol::Result + 'static {
+    let token = token.to_owned();
+
+    move |action| match action {
+        gix::credentials::helper::Action::Get(context) => {
+            Ok(Some(gix::credentials::protocol::Outcome {
+                identity: gix::sec::identity::Account {
+                    username: "oauth2".to_string(),
+                    password: token.clone(),
+                    oauth_refresh_token: None,
+                },
+                next: context.into(),
+            }))
+        }
+        gix::credentials::helper::Action::Store(_) | gix::credentials::helper::Action::Erase(_) => {
+            Ok(None)
+        }
+    }
+}
+
 pub fn git_clone(
     repository_url: Url,
     local_path: &str,
     branch: &str,
+    auth: &GitAuthentication,
 ) -> Result<Repository, String> {
     std::fs::create_dir_all(local_path).map_err(|details| format!("{}", details))?;
 
@@ -17,6 +42,14 @@ pub fn git_clone(
         .map_err(|details| format!("{}", details))?
         .with_ref_name(Some(ref_name.as_str()))
         .map_err(|details| format!("{}", details))?;
+
+    if let GitAuthentication::WithToken(token) = auth {
+        let token = token.clone();
+        prepare_clone = prepare_clone.configure_connection(move |connection| {
+            connection.set_credentials(token_credentials(&token));
+            Ok(())
+        });
+    }
 
     let (mut prepare_checkout, _) = prepare_clone
         .fetch_then_checkout(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)
@@ -42,7 +75,7 @@ pub fn git_clone(
     Ok(repo)
 }
 
-pub fn git_pull(local_path: &str) -> Result<(), String> {
+pub fn git_pull(local_path: &str, auth: &GitAuthentication) -> Result<(), String> {
     // Inject local committer config before opening the repo so gix loads it into memory
     let config_path = Path::new(local_path).join(".git").join("config");
     if let Ok(mut file) = std::fs::OpenOptions::new()
@@ -93,9 +126,16 @@ pub fn git_pull(local_path: &str) -> Result<(), String> {
         .find_remote(&remote_name)
         .map_err(|details| format!("{}", details))?;
 
-    remote
+    let mut connection = remote
         .connect(gix::remote::Direction::Fetch)
-        .map_err(|details| format!("{}", details))?
+        .map_err(|details| format!("{}", details))?;
+
+    // Must be set before `prepare_fetch`, which is what performs the handshake.
+    if let GitAuthentication::WithToken(token) = auth {
+        connection.set_credentials(token_credentials(token));
+    }
+
+    connection
         .prepare_fetch(gix::progress::Discard, Default::default())
         .map_err(|details| format!("{}", details))?
         .receive(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)

@@ -16,7 +16,7 @@ use crate::git::{git_clone, git_pull};
 #[tokio::main]
 async fn main() {
     // Getting configuration
-    let config = match File::open("/etc/regops/config.toml") {
+    let config = match File::open("default_config/config.toml") {
         // let mut configuration_file = match File::open("/etc/regops/config.toml") {
         Ok(mut configuration_file) => {
             let mut file_content: Vec<u8> = Vec::new();
@@ -99,7 +99,8 @@ async fn main() {
                 Ok(remote) => {
                     match remote.url(gix::remote::Direction::Fetch) {
                         Some(current_remote_url) => {
-                            if current_remote_url.to_bstring() == config.git.repo.unwrap().as_str()
+                            if current_remote_url.to_bstring()
+                                == config.git.repo.as_ref().unwrap().as_str()
                             {
                                 // The current repository is the expected one. No initial cloning required.
                             } else {
@@ -128,7 +129,15 @@ async fn main() {
 
     if initial_cloning_required {
         // There is no repository in here, initial cloning required
-        git_clone(repository_url, &config.git.local_path, &config.git.branch).unwrap();
+        if let Err(details) = git_clone(
+            repository_url,
+            &config.git.local_path,
+            &config.git.branch,
+            &config.authentication_mode(),
+        ) {
+            error!(%details, "Initial git clone failed");
+            exit(1);
+        };
     }
 
     // Regent initialization
@@ -148,17 +157,19 @@ async fn main() {
     // Entering the infinite loop
     loop {
         // Git part to get up to date with expected state
-        git_pull(&config.git.local_path).unwrap();
+        git_pull(&config.git.local_path, &config.authentication_mode()).unwrap();
 
         // Regent part
-        let expected_state_description =
-            match std::fs::read_to_string(format!("{}/{}", config.git.local_path, config.git.expected_state_path)) {
-                Ok(content) => content,
-                Err(details) => {
-                    error!(?details, "Failed to get file content");
-                    continue;
-                }
-            };
+        let expected_state_description = match std::fs::read_to_string(format!(
+            "{}/{}",
+            config.git.local_path, config.git.expected_state_path
+        )) {
+            Ok(content) => content,
+            Err(details) => {
+                error!(?details, "Failed to get file content");
+                continue;
+            }
+        };
         let expected_state = match ExpectedState::from_raw_yaml(&expected_state_description) {
             Ok(state) => state,
             Err(error_detail) => {

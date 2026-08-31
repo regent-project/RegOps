@@ -3,6 +3,8 @@ repo = "https://github.com/regent-project/RegOps.git"
 branch = "main"
 local_path = "/tmp/regops"
 expected_state_path = "examples/state.yaml"
+[Git.auth]
+token = "XXXX"
 
 [SystemIntegration]
 log_level = "Info"
