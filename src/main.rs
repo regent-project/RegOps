@@ -16,7 +16,7 @@ use crate::git::{git_clone, git_pull};
 #[tokio::main]
 async fn main() {
     // Getting configuration
-    let config = match File::open("default_config/config.toml") {
+    let config = match File::open("/etc/regops/config.toml") {
         // let mut configuration_file = match File::open("/etc/regops/config.toml") {
         Ok(mut configuration_file) => {
             let mut file_content: Vec<u8> = Vec::new();

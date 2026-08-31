@@ -1,6 +1,7 @@
-# Release v0.2.1
+# Release v0.2.2
 
-Adding token-based authentication for remote git repository (gitlab and github compatiblity using "oauth2" key)
+- Adding token-based authentication for remote git repository (gitlab and github compatiblity using "oauth2" key)
+- Fix configuration file path
 
 ## Update
 Download the `.deb` and install it using:
