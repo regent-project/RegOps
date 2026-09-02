@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove)
+        systemctl disable regops.service || true
+        ;;
+    purge)
+        rm -f /etc/sudoers.d/regops
+        rm -rf /home/regops
+        if getent passwd regops > /dev/null; then
+            userdel --force regops || true
+        fi
+        if getent group regops > /dev/null; then
+            groupdel regops || true
+        fi
+        systemctl daemon-reload || true
+        ;;
+esac

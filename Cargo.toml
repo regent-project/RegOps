@@ -1,6 +1,6 @@
 [package]
 name = "regops"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 authors     = ["Romain SUZANNE <romzorus591@gmail.com>"]
 repository  = "https://github.com/regent-project/regops.git"
@@ -32,7 +32,7 @@ license-file = ["LICENSE"]
 conf-files = ["/etc/regops/config.toml"]
 extended-description = """\
  GitOps agent for localhost configuration management"""
-depends = "$auto"
+depends = "$auto, systemd, sudo"
 section = "utility"
 priority = "optional"
 assets = [

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        systemctl stop regops.service || true
+        ;;
+    upgrade|failed-upgrade)
+        ;;
+esac

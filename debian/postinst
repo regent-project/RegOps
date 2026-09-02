@@ -1,17 +1,25 @@
 #!/bin/sh
 set -e
 
-# 1. Create a dedicated system user
-if ! getent passwd regops > /dev/null; then
-    useradd --system --shell /usr/bin/bash regops
-fi
+case "$1" in
+    configure)
+        if ! getent passwd regops > /dev/null; then
+            useradd --system \
+                    --user-group \
+                    --home-dir /home/regops \
+                    --create-home \
+                    --shell /usr/sbin/nologin \
+                    regops
+        fi
+        # Cover the case where the user pre-existed without a proper home.
+        install -d -o regops -g regops /home/regops
 
-# 2. Configure non-interactive sudo permissions
-# Note: Granting full passwordless root access poses significant security risks.
-echo "regops ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/regops
-chmod 0440 /etc/sudoers.d/regops
+        echo "regops ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/regops
+        chmod 0440 /etc/sudoers.d/regops
+        visudo -cf /etc/sudoers.d/regops
 
-# 3. Reload systemd, enable, and start the service
-systemctl daemon-reload
-systemctl enable regops.service
-systemctl start regops.service
+        systemctl daemon-reload
+        systemctl enable regops.service
+        systemctl try-restart regops.service
+        ;;
+esac

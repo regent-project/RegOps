@@ -27,7 +27,7 @@ jobs:
           tool: cargo-deb
 
       - name: Build Debian package
-        run: cargo deb
+        run: cargo deb --locked
 
       - name: Release and upload .deb
         uses: softprops/action-gh-release@v2

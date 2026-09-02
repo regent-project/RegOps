@@ -1,6 +1,7 @@
-# Release v0.2.3
+# Release v0.4.1
 
-- New version to use fixed regent-sdk version (tracing span name issue)
+- Based on regent 0.10.0 with new Dns attribute
+- Deployment to debian-like distributions improved (buf fix on home folder, and better lifecycle events handling)
 
 ## Update
 Download the `.deb` and install it using:
