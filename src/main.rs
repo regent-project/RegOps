@@ -1,55 +1,42 @@
-use regent_sdk::ExpectedState;
-use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
-use regent_sdk::hosts::managed_host::ManagedHostBuilder;
-use std::process::exit;
-use std::{fs::File, io::Read};
+use std::fs::File;
+use std::io::Read;
 use tokio::time::{Duration, sleep};
 use tracing::{error, info, span, warn};
 use tracing_subscriber::{Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use regent_sdk::hosts::managed_host::{ManagedHost, ManagedHostBuilder};
+use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
+use regent_sdk::ExpectedState;
 
 mod config;
 mod git;
 
-use crate::config::{LogFormat, RegOpsConfig, RunningMode};
-use crate::git::{git_clone, git_pull};
+use crate::config::{LogFormat, RegOpsConfig, RunningMode, SystemIntegrationConfig};
+use crate::git::{clone_fresh, git_pull, local_repo_matches_expected};
 
 #[tokio::main]
 async fn main() {
-    // Getting configuration
-    let config = match File::open("/etc/regops/config.toml") {
-        // let mut configuration_file = match File::open("/etc/regops/config.toml") {
-        Ok(mut configuration_file) => {
-            let mut file_content: Vec<u8> = Vec::new();
-            if let Err(details) = configuration_file.read_to_end(&mut file_content) {
-                println!("Unable to read configuration file content ({})", details);
-                std::process::exit(1);
-            }
-            match toml::from_slice::<RegOpsConfig>(&file_content) {
-                Ok(valid_configuration) => valid_configuration,
-                Err(details) => {
-                    println!("Invalid configuration file content ({})", details);
-                    std::process::exit(1);
-                }
-            }
+    // run() only returns once its own operational loop is interrupted by an
+    // unrecoverable startup error (bad config, no repository configured yet,
+    // failed clone, failed connection to the managed host...).
+    loop {
+        if let Err(details) = run().await {
+            eprintln!("[FATAL] unrecoverable error, retrying shortly: {}", details);
         }
-        Err(details) => {
-            println!("Unable to open configuration file ({})", details);
-            std::process::exit(1);
-        }
+        sleep(Duration::from_secs(10)).await;
+    }
+}
+
+async fn run() -> Result<(), String> {
+    let config = match load_config("/etc/regops/config.toml") {
+        Ok(config) => config,
+        Err(details) => return Err(format!("Failed to load configuration: {}", details)),
     };
 
-    // Tracing initialization
-    let fmt_layer = match config.system_integration.log_format {
-        LogFormat::Raw => fmt::layer().boxed(),
-        LogFormat::Json => fmt::layer().json().boxed(),
-    };
+    // Tracing may already be initialized from a previous retry loop iteration
+    // We just keep using the existing subscriber.
+    init_tracing(&config.system_integration);
 
-    tracing_subscriber::registry()
-        .with(config.system_integration.log_level.to_tracing_level())
-        .with(fmt_layer)
-        .init();
-
-    // Get hostname first for global tracing span
+    // Get hostname first for the global tracing span and for the managed host id
     let hostname = match hostname::get() {
         Ok(value) => value.to_string_lossy().to_string(),
         Err(details) => {
@@ -60,104 +47,78 @@ async fn main() {
     let global_span = span!(tracing::Level::INFO, "RegOps", ?hostname);
     let _guard = global_span.enter();
 
-    std::fs::create_dir_all(&config.git.local_path).unwrap();
-
-    // Usefull for initial configuration. Right after installation, the user might not have configuration a git repository yet.
-    let repository_url;
-
-    loop {
-        match &config.git.repo {
-            Some(repo_url) => match gix::url::parse(repo_url) {
-                Ok(repo_url) => {
-                    repository_url = repo_url;
-                    break;
-                }
-                Err(details) => {
-                    warn!(%details, "Invalid git repository");
-                    sleep(Duration::from_secs(10)).await;
-                }
-            },
-            None => {
-                warn!("No repository url set yet");
-                sleep(Duration::from_secs(10)).await;
-            }
+    // Right after installation, the repository might not be configured yet.
+    // Treat that as a startup error like any other: it gets logged and
+    // retried, and re-reading the config file on each retry means a
+    // repository added later is picked up without a restart.
+    let repo = match &config.git.repo {
+        Some(repo) => repo.clone(),
+        None => {
+            warn!("No repository url set yet");
+            return Err("No git repository configured (git.repo is unset)".to_string());
         }
-    }
+    };
 
-    info!("Git repository : {:?}", repository_url);
+    info!("Git repository : {}", repo);
     info!("Running mode : {:?}", config.behavior.mode);
 
-    // Check if repository is already present
-    // Initial cloning of the repository
+    let auth = config.authentication_mode();
 
-    let mut initial_cloning_required = false;
-
-    match gix::open(&config.git.local_path) {
-        Ok(already_existing_repository) => {
-            // There is already a repository. Check that it is the expected one.
-            match already_existing_repository.find_remote("origin") {
-                Ok(remote) => {
-                    match remote.url(gix::remote::Direction::Fetch) {
-                        Some(current_remote_url) => {
-                            if current_remote_url.to_bstring()
-                                == config.git.repo.as_ref().unwrap().as_str()
-                            {
-                                // The current repository is the expected one. No initial cloning required.
-                            } else {
-                                // The current repository is not the expected one.
-                                // There is ambiguity. Abort.
-                                error!(
-                                    "There is already a git repository in place, but not the expected one."
-                                );
-                                exit(1);
-                            }
-                        }
-                        None => {
-                            initial_cloning_required = true;
-                        }
-                    }
-                }
-                Err(_details) => {
-                    initial_cloning_required = true;
-                }
-            }
-        }
-        Err(_details) => {
-            initial_cloning_required = true;
+    // Check whether the local copy already present matches what's expected
+    // (valid repository, right remote, right branch checked out). Any
+    // mismatch or issue (missing folder, wrong branch, merge conflict, stale
+    // remote...) is not worth diagnosing: wipe it and clone fresh.
+    if !local_repo_matches_expected(&config.git.local_path, &repo, &config.git.branch) {
+        match clone_fresh(&config.git.local_path, &repo, &config.git.branch, &auth) {
+            Ok(()) => {}
+            Err(details) => return Err(format!("Failed initial cloning: {}", details)),
         }
     }
 
-    if initial_cloning_required {
-        // There is no repository in here, initial cloning required
-        if let Err(details) = git_clone(
-            repository_url,
-            &config.git.local_path,
-            &config.git.branch,
-            &config.authentication_mode(),
-        ) {
-            error!(%details, "Initial git clone failed");
-            exit(1);
-        };
-    }
-
-    // Regent initialization
-
-    // We expect the user which runs RegOps to have required permissions with non-interactive sudo capability
-    // Granularity can be easily added through config.toml (add a "Regent" section)
-    let mut managed_localhost = ManagedHostBuilder::new(
+    // Regent initialization.
+    // We expect the user which runs RegOps to have required permissions with
+    // non-interactive sudo capability. Granularity can be easily added
+    // through config.toml (add a "Regent" section).
+    let managed_host_builder = ManagedHostBuilder::new(
         &hostname,
         "localhost",
         Some(ConnectionMethod::Localhost(TargetUser::current_user())),
-    )
-    .build(None)
-    .await
-    .unwrap();
-    managed_localhost.connect().await.unwrap();
+    );
 
-    // Entering the infinite loop
+    let mut managed_localhost: ManagedHost = match managed_host_builder.build(None).await {
+        Ok(managed_host) => managed_host,
+        Err(details) => return Err(format!("Failed to build managed host: {}", details)),
+    };
+
+    match managed_localhost.connect().await {
+        Ok(()) => {}
+        Err(details) => return Err(format!("Failed to connect to managed host: {}", details)),
+    }
+
+    // Entering the operational loop. From this point on, every failure is
+    // logged and the loop keeps going rather than propagating an error,
+    // since transient issues (a bad pull, a temporarily unreachable host)
+    // should not bring the service down.
     loop {
-        // Git part to get up to date with expected state
-        git_pull(&config.git.local_path, &config.authentication_mode()).unwrap();
+        // Git part to get up to date with expected state. If the pull fails
+        // for any git-specific reason (folder gone, corrupted repository,
+        // unexpected branch state...), the local copy is no longer trusted:
+        // wipe it and realign with the remote via a fresh clone instead of
+        // trying to diagnose or repair it in place.
+        match git_pull(&config.git.local_path, &auth) {
+            Ok(()) => {}
+            Err(details) => {
+                warn!(details, "Failed to pull git repository, wiping local copy and re-cloning");
+                match clone_fresh(&config.git.local_path, &repo, &config.git.branch, &auth) {
+                    Ok(()) => {}
+                    Err(recovery_details) => {
+                        error!(recovery_details, "Failed to recover local git repository, will retry next cycle");
+                    }
+                }
+                sleep(Duration::from_secs(config.behavior.interval_sec)).await;
+                continue;
+            }
+        }
 
         // Regent part
         let expected_state_description = match std::fs::read_to_string(format!(
@@ -167,9 +128,11 @@ async fn main() {
             Ok(content) => content,
             Err(details) => {
                 error!(?details, "Failed to get file content");
+                sleep(Duration::from_secs(config.behavior.interval_sec)).await;
                 continue;
             }
         };
+
         let expected_state = match ExpectedState::from_raw_yaml(&expected_state_description) {
             Ok(state) => state,
             Err(error_detail) => {
@@ -178,22 +141,60 @@ async fn main() {
                 continue;
             }
         };
+
         match &config.behavior.mode {
             RunningMode::Assess => {
-                if let Err(details) = managed_localhost
-                    .assess_compliance(&expected_state, true)
-                    .await
-                {
-                    warn!(?details, "Failed to assess compliance");
+                match managed_localhost.assess_compliance(&expected_state, true).await {
+                    Ok(_assessment) => {}
+                    Err(details) => warn!(%details, "Failed to assess compliance"),
                 }
             }
             RunningMode::Enforce => {
-                if let Err(details) = managed_localhost.reach_compliance(&expected_state).await {
-                    warn!(?details, "Failed to enforce compliance");
+                match managed_localhost.reach_compliance(&expected_state).await {
+                    Ok(_outcome) => {}
+                    Err(details) => warn!(%details, "Failed to enforce compliance"),
                 }
             }
         }
 
         sleep(Duration::from_secs(config.behavior.interval_sec)).await;
+    }
+}
+
+fn load_config(path: &str) -> Result<RegOpsConfig, String> {
+    let mut configuration_file = match File::open(path) {
+        Ok(file) => file,
+        Err(details) => return Err(format!("Failed to open '{}': {}", path, details)),
+    };
+
+    let mut file_content: Vec<u8> = Vec::new();
+    match configuration_file.read_to_end(&mut file_content) {
+        Ok(_size) => {}
+        Err(details) => return Err(format!("Failed to read '{}': {}", path, details)),
+    }
+
+    match toml::from_slice(&file_content) {
+        Ok(config) => Ok(config),
+        Err(details) => Err(format!("Failed to parse '{}': {}", path, details)),
+    }
+}
+
+fn init_tracing(system_integration: &SystemIntegrationConfig) {
+    let fmt_layer = match system_integration.log_format {
+        LogFormat::Raw => fmt::layer().boxed(),
+        LogFormat::Json => fmt::layer().json().boxed(),
+    };
+
+    match tracing_subscriber::registry()
+        .with(system_integration.log_level.to_tracing_level())
+        .with(fmt_layer)
+        .try_init()
+    {
+        Ok(()) => {}
+        Err(details) => {
+            warn!(%details, "Tracing global subscriber init failed");
+            // A global subscriber is already installed from a previous retry
+            // of run(); keep using it.
+        }
     }
 }
