@@ -77,8 +77,7 @@ async fn run() -> Result<(), String> {
 
     // Regent initialization.
     // We expect the user which runs RegOps to have required permissions with
-    // non-interactive sudo capability. Granularity can be easily added
-    // through config.toml (add a "Regent" section).
+    // non-interactive sudo capability.
     let managed_host_builder = ManagedHostBuilder::new(
         &hostname,
         "localhost",
@@ -95,16 +94,9 @@ async fn run() -> Result<(), String> {
         Err(details) => return Err(format!("Failed to connect to managed host: {}", details)),
     }
 
-    // Entering the operational loop. From this point on, every failure is
-    // logged and the loop keeps going rather than propagating an error,
-    // since transient issues (a bad pull, a temporarily unreachable host)
-    // should not bring the service down.
+    // Operational loop
     loop {
-        // Git part to get up to date with expected state. If the pull fails
-        // for any git-specific reason (folder gone, corrupted repository,
-        // unexpected branch state...), the local copy is no longer trusted:
-        // wipe it and realign with the remote via a fresh clone instead of
-        // trying to diagnose or repair it in place.
+        
         match git_pull(&config.git.local_path, &auth) {
             Ok(()) => {}
             Err(details) => {
