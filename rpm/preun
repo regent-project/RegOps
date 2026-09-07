@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+# $1 is the number of packages of this name still installed after this one
+# is removed. Stop the service only on final removal, not on upgrade.
+if [ "$1" = "0" ]; then
+    systemctl stop regops.service || true
+fi

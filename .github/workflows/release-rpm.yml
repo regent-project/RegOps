@@ -1,0 +1,36 @@
+name: Build and Release RPM Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-rpm:
+    name: Build RPM and Release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-generate-rpm
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-generate-rpm
+
+      - name: Build RPM package
+        run: cargo build --release --locked && cargo generate-rpm
+
+      - name: Release and upload .rpm
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/generate-rpm/*.rpm
+          body_path: CHANGELOG.md
