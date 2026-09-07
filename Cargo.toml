@@ -1,6 +1,6 @@
 [package]
 name = "regops"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 authors     = ["Romain SUZANNE <romzorus591@gmail.com>"]
 repository  = "https://github.com/regent-project/regops.git"
@@ -40,3 +40,19 @@ assets = [
     ["systemd/regops.service", "lib/systemd/system/regops.service", "644"],
     ["default_config/config.toml", "etc/regops/config.toml", "644"]
 ]
+
+[package.metadata.generate-rpm]
+release = "1"
+assets = [
+    { source = "target/release/regops", dest = "/usr/bin/regops", mode = "755" },
+    { source = "systemd/regops.service", dest = "/usr/lib/systemd/system/regops.service", mode = "644" },
+    { source = "default_config/config.toml", dest = "/etc/regops/config.toml", mode = "644", config = "noreplace" },
+    { source = "LICENSE", dest = "/usr/share/doc/regops/LICENSE", mode = "644", doc = true },
+]
+post_install_script = "rpm/postinst"
+pre_uninstall_script = "rpm/preun"
+post_uninstall_script = "rpm/postun"
+
+[package.metadata.generate-rpm.requires]
+systemd = "*"
+sudo = "*"

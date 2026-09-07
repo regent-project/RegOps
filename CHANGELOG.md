@@ -1,7 +1,7 @@
-# Release v0.4.1
+# Release v0.5.0
 
-- Based on regent 0.10.0 with new Dns attribute
-- Deployment to debian-like distributions improved (buf fix on home folder, and better lifecycle events handling)
+- Based on regent 0.11.0 with new Dhcp attribute
+- Automatic RPM package creation for releases, alongside the DEB package
 
 ## Update
 Download the `.deb` and install it using:
