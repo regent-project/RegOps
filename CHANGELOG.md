@@ -1,7 +1,6 @@
-# Release v0.5.0
+# Release v0.5.1
 
-- Based on regent 0.11.0 with new Dhcp attribute
-- Automatic RPM package creation for releases, alongside the DEB package
+- Based on regent 0.11.1 with fixes and improvements for Dns and Dhcp attributes
 
 ## Update
 Download the `.deb` and install it using:
