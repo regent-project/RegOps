@@ -1,6 +1,6 @@
-# Release v0.5.1
+# Release v0.6.0
 
-- Based on regent 0.11.1 with fixes and improvements for Dns and Dhcp attributes
+- Based on regent 0.12.0 with introduction to the Template attribute
 
 ## Update
 Download the `.deb` and install it using:
