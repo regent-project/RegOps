@@ -17,6 +17,40 @@ graph TD
     Apply --> Sleep[Sleep for X Seconds]
     Sleep --> Start
 ```
+## The CLI
+
+### Running the Service
+
+```bash
+# Run the RegOps service permanently
+regops run
+
+# or just once
+regops run-once
+```
+
+### Configuration Management
+
+```bash
+# Get current configuration
+regops config get
+
+# Initialize a new configuration file
+regops config init \
+  --repo https://github.com/your-org/your-repo.git \
+  --branch main \
+  --local-path /home/regops/repo \
+  --expected-state-path expected_state.yaml \
+  --mode enforce \
+  --interval-sec 60 \
+  --log-level info \
+  --log-format raw
+
+# Validate configuration file
+regops config validate
+```
+
+
 ## Contributing
 
 We welcome contributions and feedback ! This project needs help with:

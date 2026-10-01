@@ -1,39 +1,115 @@
-use std::fs::File;
-use std::io::Read;
+use clap::{CommandFactory, Parser};
+use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
+use regent_sdk::hosts::managed_host::{ManagedHost, ManagedHostBuilder};
 use tokio::time::{Duration, sleep};
 use tracing::{error, info, span, warn};
 use tracing_subscriber::{Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
-use regent_sdk::hosts::managed_host::{ManagedHost, ManagedHostBuilder};
-use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
-use regent_sdk::ExpectedState;
 
+mod cli;
+mod common;
 mod config;
 mod git;
+mod run;
 
-use crate::config::{LogFormat, RegOpsConfig, RunningMode, SystemIntegrationConfig};
-use crate::git::{clone_fresh, git_pull, local_repo_matches_expected};
+use crate::cli::{Cli, Commands, CompletionCommands, ConfigCommands};
+use crate::common::init_tracing;
+use crate::config::load_config;
+use crate::run::perform_compliance_pass;
+use tracing_subscriber::filter::LevelFilter;
+
+fn init_default_tracing() {
+    let fmt_layer = fmt::layer().boxed();
+
+    tracing_subscriber::registry()
+        .with(LevelFilter::INFO)
+        .with(fmt_layer)
+        .try_init()
+        .ok();
+}
 
 #[tokio::main]
 async fn main() {
-    // run() only returns once its own operational loop is interrupted by an
-    // unrecoverable startup error (bad config, no repository configured yet,
-    // failed clone, failed connection to the managed host...).
+    let cli = Cli::parse();
+
+    // Initialize default tracing for CLI commands
+    init_default_tracing();
+
+    // Handle CLI commands that don't run the service
+    match cli.command {
+        Commands::Run => {
+            service_main(&cli.config_path).await;
+        }
+        Commands::Config { config_command } => {
+            match config_command {
+                ConfigCommands::Get => {
+                    cli::config_get(&cli.config_path);
+                }
+                ConfigCommands::Init {
+                    repo,
+                    branch,
+                    local_path,
+                    expected_state_path,
+                    mode,
+                    interval_sec,
+                    log_level,
+                    log_format,
+                } => {
+                    cli::config_init(
+                        &cli.config_path,
+                        &repo,
+                        &branch,
+                        &local_path,
+                        &expected_state_path,
+                        mode,
+                        interval_sec,
+                        log_level,
+                        log_format,
+                    );
+                }
+                ConfigCommands::Validate => {
+                    cli::config_validate(&cli.config_path);
+                }
+            }
+            std::process::exit(0);
+        }
+        Commands::RunOnce => {
+            if let Err(details) = run::run_once(&cli.config_path).await {
+                error!("On-demand pass failed: {}", details);
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
+        Commands::Completion(completion_command) => {
+            use clap_complete::{Shell, generate};
+            use std::io;
+
+            let mut app = cli::Cli::command();
+            let shell = match completion_command {
+                CompletionCommands::Bash => Shell::Bash,
+                CompletionCommands::Zsh => Shell::Zsh,
+                CompletionCommands::Fish => Shell::Fish,
+            };
+            generate(shell, &mut app, "regops", &mut io::stdout());
+            std::process::exit(0);
+        }
+    }
+}
+
+async fn service_main(config_path: &str) {
     loop {
-        if let Err(details) = run().await {
-            eprintln!("[FATAL] unrecoverable error, retrying shortly: {}", details);
+        if let Err(details) = run(config_path).await {
+            error!("unrecoverable error, retrying shortly: {}", details);
         }
         sleep(Duration::from_secs(10)).await;
     }
 }
 
-async fn run() -> Result<(), String> {
-    let config = match load_config("/etc/regops/config.toml") {
+async fn run(config_path: &str) -> Result<(), String> {
+    let config = match load_config(config_path) {
         Ok(config) => config,
         Err(details) => return Err(format!("Failed to load configuration: {}", details)),
     };
 
-    // Tracing may already be initialized from a previous retry loop iteration
-    // We just keep using the existing subscriber.
     init_tracing(&config.system_integration);
 
     // Get hostname first for the global tracing span and for the managed host id
@@ -64,19 +140,8 @@ async fn run() -> Result<(), String> {
 
     let auth = config.authentication_mode();
 
-    // Check whether the local copy already present matches what's expected
-    // (valid repository, right remote, right branch checked out). Any
-    // mismatch or issue (missing folder, wrong branch, merge conflict, stale
-    // remote...) is not worth diagnosing: wipe it and clone fresh.
-    if !local_repo_matches_expected(&config.git.local_path, &repo, &config.git.branch) {
-        match clone_fresh(&config.git.local_path, &repo, &config.git.branch, &auth) {
-            Ok(()) => {}
-            Err(details) => return Err(format!("Failed initial cloning: {}", details)),
-        }
-    }
-
     // Regent initialization.
-    // We expect the user which runs RegOps to have required permissions with
+    // We expect the user which runs Regops to have required permissions with
     // non-interactive sudo capability.
     let managed_host_builder = ManagedHostBuilder::new(
         &hostname,
@@ -96,97 +161,14 @@ async fn run() -> Result<(), String> {
 
     // Operational loop
     loop {
-        
-        match git_pull(&config.git.local_path, &auth) {
-            Ok(()) => {}
-            Err(details) => {
-                warn!(details, "Failed to pull git repository, wiping local copy and re-cloning");
-                match clone_fresh(&config.git.local_path, &repo, &config.git.branch, &auth) {
-                    Ok(()) => {}
-                    Err(recovery_details) => {
-                        error!(recovery_details, "Failed to recover local git repository, will retry next cycle");
-                    }
-                }
-                sleep(Duration::from_secs(config.behavior.interval_sec)).await;
-                continue;
-            }
+        if let Err(details) =
+            perform_compliance_pass(&mut managed_localhost, &config, &auth, &repo).await
+        {
+            error!(
+                details,
+                "Failed to perform compliance pass, will retry next cycle"
+            );
         }
-
-        // Regent part
-        let expected_state_description = match std::fs::read_to_string(format!(
-            "{}/{}",
-            config.git.local_path, config.git.expected_state_path
-        )) {
-            Ok(content) => content,
-            Err(details) => {
-                error!(?details, "Failed to get file content");
-                sleep(Duration::from_secs(config.behavior.interval_sec)).await;
-                continue;
-            }
-        };
-
-        let expected_state = match ExpectedState::from_raw_yaml(&expected_state_description) {
-            Ok(state) => state,
-            Err(error_detail) => {
-                error!("Wrong yaml content : {:?}", error_detail);
-                sleep(Duration::from_secs(config.behavior.interval_sec)).await;
-                continue;
-            }
-        };
-
-        match &config.behavior.mode {
-            RunningMode::Assess => {
-                match managed_localhost.assess_compliance(&expected_state, true).await {
-                    Ok(_assessment) => {}
-                    Err(details) => warn!(%details, "Failed to assess compliance"),
-                }
-            }
-            RunningMode::Enforce => {
-                match managed_localhost.reach_compliance(&expected_state).await {
-                    Ok(_outcome) => {}
-                    Err(details) => warn!(%details, "Failed to enforce compliance"),
-                }
-            }
-        }
-
         sleep(Duration::from_secs(config.behavior.interval_sec)).await;
-    }
-}
-
-fn load_config(path: &str) -> Result<RegOpsConfig, String> {
-    let mut configuration_file = match File::open(path) {
-        Ok(file) => file,
-        Err(details) => return Err(format!("Failed to open '{}': {}", path, details)),
-    };
-
-    let mut file_content: Vec<u8> = Vec::new();
-    match configuration_file.read_to_end(&mut file_content) {
-        Ok(_size) => {}
-        Err(details) => return Err(format!("Failed to read '{}': {}", path, details)),
-    }
-
-    match toml::from_slice(&file_content) {
-        Ok(config) => Ok(config),
-        Err(details) => Err(format!("Failed to parse '{}': {}", path, details)),
-    }
-}
-
-fn init_tracing(system_integration: &SystemIntegrationConfig) {
-    let fmt_layer = match system_integration.log_format {
-        LogFormat::Raw => fmt::layer().boxed(),
-        LogFormat::Json => fmt::layer().json().boxed(),
-    };
-
-    match tracing_subscriber::registry()
-        .with(system_integration.log_level.to_tracing_level())
-        .with(fmt_layer)
-        .try_init()
-    {
-        Ok(()) => {}
-        Err(details) => {
-            warn!(%details, "Tracing global subscriber init failed");
-            // A global subscriber is already installed from a previous retry
-            // of run(); keep using it.
-        }
     }
 }

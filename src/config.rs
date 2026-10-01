@@ -1,7 +1,9 @@
-use serde::Deserialize;
-use tracing_subscriber::filter::LevelFilter;
+use crate::common::{GitAuthentication, LogFormat, LogLevel, RunningMode};
+use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::Read;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct RegOpsConfig {
     pub git: GitConfig,
@@ -20,7 +22,7 @@ impl RegOpsConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct GitConfig {
     pub repo: Option<String>,
     pub branch: String,
@@ -29,57 +31,37 @@ pub struct GitConfig {
     pub auth: Option<AuthMode>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AuthMode {
-    token: Option<String>,
+    pub token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct BehaviorConfig {
     pub mode: RunningMode,
     pub interval_sec: u64,
 }
 
-#[derive(Debug, Deserialize)]
-pub enum RunningMode {
-    Assess,
-    Enforce,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SystemIntegrationConfig {
     pub log_level: LogLevel,
     pub log_format: LogFormat,
 }
 
-#[derive(Debug, Deserialize)]
-pub enum LogFormat {
-    Raw,
-    Json,
-}
+pub fn load_config(path: &str) -> Result<RegOpsConfig, String> {
+    let mut configuration_file = match File::open(path) {
+        Ok(file) => file,
+        Err(details) => return Err(format!("Failed to open '{}': {}", path, details)),
+    };
 
-#[derive(Debug, Deserialize)]
-pub enum LogLevel {
-    Trace,
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
-
-impl LogLevel {
-    pub fn to_tracing_level(&self) -> LevelFilter {
-        match self {
-            LogLevel::Trace => LevelFilter::TRACE,
-            LogLevel::Debug => LevelFilter::DEBUG,
-            LogLevel::Info => LevelFilter::INFO,
-            LogLevel::Warn => LevelFilter::WARN,
-            LogLevel::Error => LevelFilter::ERROR,
-        }
+    let mut file_content: Vec<u8> = Vec::new();
+    match configuration_file.read_to_end(&mut file_content) {
+        Ok(_size) => {}
+        Err(details) => return Err(format!("Failed to read '{}': {}", path, details)),
     }
-}
 
-pub enum GitAuthentication {
-    None,
-    WithToken(String),
+    match toml::from_slice(&file_content) {
+        Ok(config) => Ok(config),
+        Err(details) => Err(format!("Failed to parse '{}': {}", path, details)),
+    }
 }

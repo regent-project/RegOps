@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use tracing::{info, warn};
 
-use crate::config::GitAuthentication;
+use crate::common::GitAuthentication;
 
 fn token_credentials(
     token: &str,
@@ -33,17 +33,30 @@ pub fn wipe_local_repo(local_path: &str) -> Result<(), String> {
         Ok(()) => {}
         Err(details) => match details.kind() {
             std::io::ErrorKind::NotFound => {}
-            _ => return Err(format!("Failed to remove local path '{}': {}", local_path, details)),
+            _ => {
+                return Err(format!(
+                    "Failed to remove local path '{}': {}",
+                    local_path, details
+                ));
+            }
         },
     }
 
     match fs::create_dir_all(local_path) {
         Ok(()) => Ok(()),
-        Err(details) => Err(format!("Failed to recreate local path '{}': {}", local_path, details)),
+        Err(details) => Err(format!(
+            "Failed to recreate local path '{}': {}",
+            local_path, details
+        )),
     }
 }
 
-pub fn clone_fresh(local_path: &str, repo: &str, branch: &str, auth: &GitAuthentication) -> Result<(), String> {
+pub fn clone_fresh(
+    local_path: &str,
+    repo: &str,
+    branch: &str,
+    auth: &GitAuthentication,
+) -> Result<(), String> {
     match wipe_local_repo(local_path) {
         Ok(()) => {}
         Err(details) => return Err(details),
@@ -51,7 +64,12 @@ pub fn clone_fresh(local_path: &str, repo: &str, branch: &str, auth: &GitAuthent
 
     let repository_url = match gix::url::parse(repo) {
         Ok(url) => url,
-        Err(details) => return Err(format!("Failed to parse repository URL '{}': {}", repo, details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to parse repository URL '{}': {}",
+                repo, details
+            ));
+        }
     };
 
     match git_clone(repository_url, local_path, branch, auth) {
@@ -60,7 +78,11 @@ pub fn clone_fresh(local_path: &str, repo: &str, branch: &str, auth: &GitAuthent
     }
 }
 
-pub fn local_repo_matches_expected(local_path: &str, expected_remote_url: &str, expected_branch: &str) -> bool {
+pub fn local_repo_matches_expected(
+    local_path: &str,
+    expected_remote_url: &str,
+    expected_branch: &str,
+) -> bool {
     let repo = match gix::open(local_path) {
         Ok(repo) => repo,
         Err(_details) => return false,
@@ -103,7 +125,12 @@ pub fn git_clone(
 ) -> Result<Repository, String> {
     match fs::create_dir_all(local_path) {
         Ok(()) => {}
-        Err(details) => return Err(format!("Failed to create local path '{}': {}", local_path, details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to create local path '{}': {}",
+                local_path, details
+            ));
+        }
     }
 
     let local_path_dir = Path::new(local_path);
@@ -116,7 +143,12 @@ pub fn git_clone(
 
     let mut prepare_clone = match prepare_clone.with_ref_name(Some(ref_name.as_str())) {
         Ok(prepare_clone) => prepare_clone,
-        Err(details) => return Err(format!("Failed to set ref name '{}': {}", ref_name, details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to set ref name '{}': {}",
+                ref_name, details
+            ));
+        }
     };
 
     if let GitAuthentication::WithToken(token) = auth {
@@ -127,15 +159,23 @@ pub fn git_clone(
         });
     }
 
-    let (mut prepare_checkout, _) =
-        match prepare_clone.fetch_then_checkout(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED) {
-            Ok(result) => result,
-            Err(details) => return Err(format!("Failed to fetch during clone: {}", details)),
-        };
-
-    let (repo, _) = match prepare_checkout.main_worktree(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED) {
+    let (mut prepare_checkout, _) = match prepare_clone
+        .fetch_then_checkout(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)
+    {
         Ok(result) => result,
-        Err(details) => return Err(format!("Failed to checkout main worktree during clone: {}", details)),
+        Err(details) => return Err(format!("Failed to fetch during clone: {}", details)),
+    };
+
+    let (repo, _) = match prepare_checkout
+        .main_worktree(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)
+    {
+        Ok(result) => result,
+        Err(details) => {
+            return Err(format!(
+                "Failed to checkout main worktree during clone: {}",
+                details
+            ));
+        }
     };
 
     // Locally unset core.attributesfile to prevent gix from failing on missing global files.
@@ -164,9 +204,16 @@ pub fn git_pull(local_path: &str, auth: &GitAuthentication) -> Result<(), String
     // Inject local committer config before opening the repo so gix loads it into memory.
     // Best-effort: a failure here doesn't invalidate the pull itself.
     let config_path = Path::new(local_path).join(".git").join("config");
-    match fs::OpenOptions::new().create(true).append(true).open(&config_path) {
+    match fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config_path)
+    {
         Ok(mut file) => {
-            if let Err(details) = writeln!(file, "\n[user]\n    name = Local User\n    email = user@local.invalid") {
+            if let Err(details) = writeln!(
+                file,
+                "\n[user]\n    name = Local User\n    email = user@local.invalid"
+            ) {
                 warn!(%details, "Failed to patch git config before pull");
             }
         }
@@ -176,7 +223,12 @@ pub fn git_pull(local_path: &str, auth: &GitAuthentication) -> Result<(), String
     // Open the existing repository
     let repo = match gix::open(local_path) {
         Ok(repo) => repo,
-        Err(details) => return Err(format!("Failed to open repository at '{}': {}", local_path, details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to open repository at '{}': {}",
+                local_path, details
+            ));
+        }
     };
 
     // Get current HEAD and find the active local branch name
@@ -202,7 +254,9 @@ pub fn git_pull(local_path: &str, auth: &GitAuthentication) -> Result<(), String
 
     // Determine the remote and tracking branch using Git config mapping
     // Falls back to "origin" and the current branch name if no upstream is explicitly set
-    let (remote_name, remote_branch_name) = match repo.branch_remote_ref_name(local_branch_ref, gix::remote::Direction::Fetch) {
+    let (remote_name, remote_branch_name) = match repo
+        .branch_remote_ref_name(local_branch_ref, gix::remote::Direction::Fetch)
+    {
         Some(Ok(remote_ref)) => {
             // Parse remote name and branch from the tracking reference if available
             // e.g., refs/remotes/origin/main -> ("origin", "main")
@@ -225,12 +279,22 @@ pub fn git_pull(local_path: &str, auth: &GitAuthentication) -> Result<(), String
     // Connect and fetch from the detected remote
     let remote = match repo.find_remote(&remote_name) {
         Ok(remote) => remote,
-        Err(details) => return Err(format!("Failed to find remote '{}': {}", remote_name, details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to find remote '{}': {}",
+                remote_name, details
+            ));
+        }
     };
 
     let mut connected_remote = match remote.connect(gix::remote::Direction::Fetch) {
         Ok(connected_remote) => connected_remote,
-        Err(details) => return Err(format!("Failed to connect to remote '{}': {}", remote_name, details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to connect to remote '{}': {}",
+                remote_name, details
+            ));
+        }
     };
 
     // Must be set before `prepare_fetch`, which is what performs the handshake.
@@ -238,32 +302,53 @@ pub fn git_pull(local_path: &str, auth: &GitAuthentication) -> Result<(), String
         connected_remote.set_credentials(token_credentials(token));
     }
 
-    let prepared_fetch = match connected_remote.prepare_fetch(gix::progress::Discard, Default::default()) {
-        Ok(prepared_fetch) => prepared_fetch,
-        Err(details) => return Err(format!("Failed to prepare fetch: {}", details)),
-    };
+    let prepared_fetch =
+        match connected_remote.prepare_fetch(gix::progress::Discard, Default::default()) {
+            Ok(prepared_fetch) => prepared_fetch,
+            Err(details) => return Err(format!("Failed to prepare fetch: {}", details)),
+        };
 
     match prepared_fetch.receive(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED) {
         Ok(_outcome) => {}
-        Err(details) => return Err(format!("Failed to fetch from remote '{}': {}", remote_name, details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to fetch from remote '{}': {}",
+                remote_name, details
+            ));
+        }
     };
 
     // Resolve the remote-tracking reference
     let remote_ref_name = format!("refs/remotes/{}/{}", remote_name, remote_branch_name);
     let mut remote_ref = match repo.find_reference(&remote_ref_name) {
         Ok(remote_ref) => remote_ref,
-        Err(details) => return Err(format!("Failed to find reference '{}': {}", remote_ref_name, details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to find reference '{}': {}",
+                remote_ref_name, details
+            ));
+        }
     };
 
     let target_commit_id = match remote_ref.peel_to_id() {
         Ok(target_commit_id) => target_commit_id,
-        Err(details) => return Err(format!("Failed to peel reference '{}' to a commit: {}", remote_ref_name, details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to peel reference '{}' to a commit: {}",
+                remote_ref_name, details
+            ));
+        }
     };
 
     // Update local branch reference (Fast-forward)
     let mut local_ref = match repo.find_reference(local_branch_ref.as_bstr()) {
         Ok(local_ref) => local_ref,
-        Err(details) => return Err(format!("Failed to find local branch reference: {}", details)),
+        Err(details) => {
+            return Err(format!(
+                "Failed to find local branch reference: {}",
+                details
+            ));
+        }
     };
 
     match local_ref.set_target_id(target_commit_id.detach(), "gix auto-pull: Fast-forward") {
@@ -308,7 +393,9 @@ pub fn git_pull(local_path: &str, auth: &GitAuthentication) -> Result<(), String
             Default::default(),
         ) {
             Ok(_) => {}
-            Err(details) => return Err(format!("Failed to checkout working directory: {}", details)),
+            Err(details) => {
+                return Err(format!("Failed to checkout working directory: {}", details));
+            }
         };
     }
 
