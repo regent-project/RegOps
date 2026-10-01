@@ -1,9 +1,17 @@
-# Release v0.6.0
+# Release v0.7.0
 
-- Based on regent 0.12.0 with introduction to the Template attribute
+## What's Changed
 
-## Update
-Download the `.deb` and install it using:
+- CLI introduction with main commands: `run` (service), `config` (management), `run-once` (single pass), and `completion` (shell integration)
+
+## Installation
+
+### Debian/Ubuntu
 ```bash
 sudo dpkg -i ./regops_<version>_amd64.deb
+```
+
+### RHEL/CentOS/Fedora
+```bash
+sudo rpm -i ./regops-<version>.<arch>.rpm
 ```
