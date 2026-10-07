@@ -53,6 +53,7 @@ async fn main() {
                     interval_sec,
                     log_level,
                     log_format,
+                    token_env_var_name,
                 } => {
                     cli::config_init(
                         &cli.config_path,
@@ -64,6 +65,7 @@ async fn main() {
                         interval_sec,
                         log_level,
                         log_format,
+                        &token_env_var_name,
                     );
                 }
                 ConfigCommands::Validate => {

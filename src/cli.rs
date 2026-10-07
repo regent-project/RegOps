@@ -3,8 +3,9 @@ use tracing::{error, info, warn};
 
 use crate::common::{LogFormat, LogLevel, RunningMode, ensure_directory_exists};
 use crate::config::{
-    BehaviorConfig, GitConfig, RegOpsConfig, SystemIntegrationConfig, load_config,
+    AuthMode, BehaviorConfig, GitConfig, RegOpsConfig, SystemIntegrationConfig, load_config,
 };
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Parser, Debug)]
 #[command(name = "regops")]
@@ -59,6 +60,11 @@ pub enum ConfigCommands {
         log_level: LogLevel,
         #[arg(long, value_enum, default_value = "raw")]
         log_format: LogFormat,
+        /// Name of the environment variable holding the Git access token.
+        /// The token value itself is never accepted on the command line, so
+        /// it cannot appear in argv or shell history.
+        #[arg(long, default_value = "REGOPS_GIT_TOKEN")]
+        token_env_var_name: String,
     },
     Validate,
 }
@@ -89,14 +95,32 @@ pub fn config_init(
     interval_sec: u64,
     log_level: LogLevel,
     log_format: LogFormat,
+    token_env_var_name: &str,
 ) {
+    let token = match std::env::var(token_env_var_name) {
+        Ok(token) => {
+            if token.is_empty() {
+                error!(
+                    "Environment variable '{token_env_var_name}' is set but empty. Give it the token value or unset it to configure no authentication"
+                );
+                std::process::exit(1);
+            }
+            Some(token)
+        }
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(details)) => {
+            error!("Environment variable '{token_env_var_name}' is not valid unicode: {details:?}");
+            std::process::exit(1);
+        }
+    };
+    let auth = token.clone().map(|token| AuthMode { token: Some(token) });
     let config = RegOpsConfig {
         git: GitConfig {
             repo: Some(repo.to_string()),
             branch: branch.to_string(),
             local_path: local_path.to_string(),
             expected_state_path: expected_state_path.to_string(),
-            auth: None,
+            auth,
         },
         behavior: BehaviorConfig { mode, interval_sec },
         system_integration: SystemIntegrationConfig {
@@ -115,6 +139,22 @@ pub fn config_init(
     if let Err(e) = std::fs::write(config_path, toml_string) {
         error!("Failed to write config file: {}", e);
         std::process::exit(1);
+    }
+
+    // The config now holds a secret: readable by the regops service user only.
+    if token.is_some() {
+        if let Err(details) =
+            std::fs::set_permissions(config_path, std::fs::Permissions::from_mode(0o640))
+        {
+            warn!(%details, "Failed to restrict config file permissions");
+        }
+        match std::process::Command::new("chown")
+            .args(["regops:regops", config_path])
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            details => warn!(?details, "Failed to chown config file to regops"),
+        }
     }
 
     info!("Configuration file initialized at: {}", config_path);
