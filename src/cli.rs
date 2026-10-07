@@ -14,8 +14,9 @@ pub struct Cli {
     #[arg(short, long, global = true, default_value = "/etc/regops/config.toml")]
     pub config_path: String,
 
+    /// No subcommand: run the service (matches the shipped systemd unit).
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]

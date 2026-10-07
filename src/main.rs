@@ -36,10 +36,10 @@ async fn main() {
 
     // Handle CLI commands that don't run the service
     match cli.command {
-        Commands::Run => {
+        None | Some(Commands::Run) => {
             service_main(&cli.config_path).await;
         }
-        Commands::Config { config_command } => {
+        Some(Commands::Config { config_command }) => {
             match config_command {
                 ConfigCommands::Get => {
                     cli::config_get(&cli.config_path);
@@ -72,14 +72,14 @@ async fn main() {
             }
             std::process::exit(0);
         }
-        Commands::RunOnce => {
+        Some(Commands::RunOnce) => {
             if let Err(details) = run::run_once(&cli.config_path).await {
                 error!("On-demand pass failed: {}", details);
                 std::process::exit(1);
             }
             std::process::exit(0);
         }
-        Commands::Completion(completion_command) => {
+        Some(Commands::Completion(completion_command)) => {
             use clap_complete::{Shell, generate};
             use std::io;
 
