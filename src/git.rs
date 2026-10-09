@@ -8,7 +8,10 @@ use crate::common::GitAuthentication;
 
 fn token_credentials(
     token: &str,
-) -> impl FnMut(gix::credentials::helper::Action) -> gix::credentials::protocol::Result + 'static {
+) -> impl FnMut(
+    gix::credentials::helper::Action,
+) -> gix::Result<Option<gix::credentials::protocol::Outcome>>
++ 'static {
     let token = token.to_owned();
 
     move |action| match action {
@@ -383,14 +386,23 @@ pub fn git_pull(local_path: &str, auth: &GitAuthentication) -> Result<(), String
     };
 
     if let Some(workdir) = repo.workdir() {
+        let checkout_options = match repo
+            .checkout_options(gix::worktree::stack::state::attributes::Source::IdMapping)
+        {
+            Ok(options) => options,
+            Err(details) => {
+                return Err(format!("Failed to build checkout options: {}", details));
+            }
+        };
+
         match gix::worktree::state::checkout(
             &mut index,
             workdir,
             repo.objects.clone(),
             &gix::progress::Discard,
             &gix::progress::Discard,
-            &Default::default(),
-            Default::default(),
+            &gix::interrupt::IS_INTERRUPTED,
+            checkout_options,
         ) {
             Ok(_) => {}
             Err(details) => {

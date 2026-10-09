@@ -1,8 +1,8 @@
-# Release v0.7.0
+# Release v0.8.0
 
 ## What's Changed
 
-- CLI introduction with main commands: `run` (service), `config` (management), `run-once` (single pass), and `completion` (shell integration)
+- Adaptation to regent-sdk 0.13.0 and gix 0.89.0
 
 ## Installation
 
