@@ -3342,9 +3342,9 @@ dependencies = [
 
 [[package]]
 name = "regent-sdk"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12410f035bb1f20955768157d85971c0f0b3e300a09ff05a4a748f1ce357ff71"
+checksum = "cc7a6d8008e47391748fde1dc3b7f1f0374c91e6db2db15f09fab749136c62f6"
 dependencies = [
  "bytes",
  "chrono",

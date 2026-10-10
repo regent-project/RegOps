@@ -1,8 +1,8 @@
-# Release v0.8.0
+# Release v0.8.1
 
 ## What's Changed
 
-- Adaptation to regent-sdk 0.13.0 and gix 0.89.0
+- Updated to use regent-sdk 0.13.1 (ssh2 fix)
 
 ## Installation
 
