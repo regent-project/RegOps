@@ -1,8 +1,8 @@
-# Release v0.8.1
+# Release v0.9.0
 
 ## What's Changed
 
-- Updated to use regent-sdk 0.13.1 (ssh2 fix)
+- Updated to use regent-sdk 0.15.0
 
 ## Installation
 
