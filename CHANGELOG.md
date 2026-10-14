@@ -1,3 +1,10 @@
+# Release v0.9.1
+
+## What's Changed
+
+- Updated to use regent-sdk 0.15.1
+- Updated example expected state to use humantime duration format for attribute timeouts (e.g. `30s` instead of `30`)
+
 # Release v0.9.0
 
 ## What's Changed
