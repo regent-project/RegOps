@@ -1,4 +1,4 @@
-# Release v0.9.1
+# Release v0.10.0
 
 ## What's Changed
 
@@ -9,7 +9,7 @@
 
 ## What's Changed
 
-- Updated to use regent-sdk 0.15.0
+- Updated to use regent-sdk 0.16.0 : new storage attribute, multiple API revisited
 
 ## Installation
 
