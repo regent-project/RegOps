@@ -1,15 +1,10 @@
-# Release v0.10.0
+# Release v0.10.1
 
 ## What's Changed
 
-- Updated to use regent-sdk 0.15.1
-- Updated example expected state to use humantime duration format for attribute timeouts (e.g. `30s` instead of `30`)
+- Updated to use regent-sdk 0.16.1
+- Multiple fixes and improvement, especially on Storage
 
-# Release v0.9.0
-
-## What's Changed
-
-- Updated to use regent-sdk 0.16.0 : new storage attribute, multiple API revisited
 
 ## Installation
 
