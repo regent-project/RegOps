@@ -1,9 +1,10 @@
 use clap::{Parser, Subcommand};
 use tracing::{error, info, warn};
 
-use crate::common::{LogFormat, LogLevel, RunningMode, ensure_directory_exists};
+use crate::common::{LogFormat, LogLevel, PackageFormat, RunningMode, ensure_directory_exists};
 use crate::config::{
-    AuthMode, BehaviorConfig, GitConfig, RegOpsConfig, SystemIntegrationConfig, load_config,
+    AuthMode, AutoUpdateConfig, BehaviorConfig, GitConfig, RegOpsConfig, SystemIntegrationConfig,
+    load_config,
 };
 use std::os::unix::fs::PermissionsExt;
 
@@ -65,6 +66,21 @@ pub enum ConfigCommands {
         /// it cannot appear in argv or shell history.
         #[arg(long, default_value = "REGOPS_GIT_TOKEN")]
         token_env_var_name: String,
+        /// Enable self-update: the agent will periodically check GitHub
+        /// releases and install newer versions of itself.
+        #[arg(long)]
+        auto_update: bool,
+        /// GitHub API URL for the latest release (required when --auto-update
+        /// is set). Example:
+        /// https://api.github.com/repos/regent-project/regops/releases/latest
+        #[arg(long)]
+        github_api_url: Option<String>,
+        /// How often to check for updates, in seconds.
+        #[arg(long, default_value = "3600")]
+        auto_update_check_interval_sec: u64,
+        /// Package format to download for self-updates.
+        #[arg(long, value_enum, default_value = "auto")]
+        package_format: PackageFormat,
     },
     Validate,
 }
@@ -96,6 +112,10 @@ pub fn config_init(
     log_level: LogLevel,
     log_format: LogFormat,
     token_env_var_name: &str,
+    auto_update: bool,
+    github_api_url: Option<String>,
+    auto_update_check_interval_sec: u64,
+    package_format: PackageFormat,
 ) {
     let token = match std::env::var(token_env_var_name) {
         Ok(token) => {
@@ -113,6 +133,24 @@ pub fn config_init(
             std::process::exit(1);
         }
     };
+
+    // Validate auto-update options: when enabled, the GitHub API URL is required.
+    let auto_update_section = if auto_update {
+        match github_api_url {
+            Some(url) if !url.trim().is_empty() => Some(AutoUpdateConfig {
+                github_api_url: url,
+                check_interval_sec: auto_update_check_interval_sec,
+                package_format,
+            }),
+            _ => {
+                error!("--github-api-url is required when --auto-update is set");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
     let auth = token.clone().map(|token| AuthMode { token: Some(token) });
     let config = RegOpsConfig {
         git: GitConfig {
@@ -122,11 +160,16 @@ pub fn config_init(
             expected_state_path: expected_state_path.to_string(),
             auth,
         },
-        behavior: BehaviorConfig { mode, interval_sec },
+        behavior: BehaviorConfig {
+            mode,
+            interval_sec,
+            auto_update,
+        },
         system_integration: SystemIntegrationConfig {
             log_level,
             log_format,
         },
+        auto_update: auto_update_section,
     };
 
     let toml_string = toml::to_string(&config).unwrap_or_else(|e| {
@@ -165,6 +208,26 @@ pub fn config_validate(config_path: &str) {
         Ok(config) => {
             if config.git.repo.is_none() {
                 warn!("No git repository configured (git.repo is unset)");
+            }
+
+            if config.behavior.auto_update {
+                match &config.auto_update {
+                    Some(auto_update) => {
+                        info!(
+                            github_api_url = %auto_update.github_api_url,
+                            check_interval_sec = auto_update.check_interval_sec,
+                            package_format = ?auto_update.package_format,
+                            "Auto-update is enabled"
+                        );
+                    }
+                    None => {
+                        // Unreachable: load_config validates this constraint.
+                        error!("Auto-update is enabled but no [AutoUpdate] section is present");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                info!("Auto-update is disabled");
             }
 
             info!("Configuration file is valid");

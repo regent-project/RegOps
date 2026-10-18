@@ -53,6 +53,18 @@ pub enum RunningMode {
     Enforce,
 }
 
+/// Which system package format to download and install for self-updates.
+#[derive(Debug, Default, Deserialize, Serialize, Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum PackageFormat {
+    /// Auto-detect: prefer .deb when dpkg is available, otherwise .rpm.
+    #[default]
+    Auto,
+    /// Debian / Ubuntu package (.deb), installed with dpkg.
+    Deb,
+    /// RPM package (.rpm), installed with rpm.
+    Rpm,
+}
+
 pub enum GitAuthentication {
     None,
     WithToken(String),

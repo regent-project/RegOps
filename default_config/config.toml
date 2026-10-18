@@ -11,3 +11,12 @@ log_format = "Raw"
 [Behavior]
 mode = "Assess"
 interval_sec = 30
+# Set to true to enable self-update: the agent periodically checks GitHub
+# releases and installs newer versions of itself, then restarts.
+# When true, an [AutoUpdate] section must be present below.
+auto_update = false
+
+# [AutoUpdate]
+# github_api_url = "https://api.github.com/repos/regent-project/regops/releases/latest"
+# check_interval_sec = 3600
+# package_format = "Auto"

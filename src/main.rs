@@ -5,12 +5,14 @@ use tokio::time::{Duration, sleep};
 use tracing::{error, info, span, warn};
 use tracing_subscriber::{Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
+mod auto_update;
 mod cli;
 mod common;
 mod config;
 mod git;
 mod run;
 
+use crate::auto_update::{UpdateChecker, UpdateOutcome};
 use crate::cli::{Cli, Commands, CompletionCommands, ConfigCommands};
 use crate::common::init_tracing;
 use crate::config::load_config;
@@ -54,6 +56,10 @@ async fn main() {
                     log_level,
                     log_format,
                     token_env_var_name,
+                    auto_update,
+                    github_api_url,
+                    auto_update_check_interval_sec,
+                    package_format,
                 } => {
                     cli::config_init(
                         &cli.config_path,
@@ -66,6 +72,10 @@ async fn main() {
                         log_level,
                         log_format,
                         &token_env_var_name,
+                        auto_update,
+                        github_api_url,
+                        auto_update_check_interval_sec,
+                        package_format,
                     );
                 }
                 ConfigCommands::Validate => {
@@ -161,8 +171,40 @@ async fn run(config_path: &str) -> Result<(), String> {
         Err(details) => return Err(format!("Failed to connect to managed host: {}", details)),
     }
 
+    // Set up the self-update checker if auto-update is enabled.
+    let mut update_checker = if config.behavior.auto_update {
+        match &config.auto_update {
+            Some(auto_update_config) => {
+                info!(
+                    check_interval_sec = auto_update_config.check_interval_sec,
+                    github_api_url = %auto_update_config.github_api_url,
+                    "Auto-update enabled"
+                );
+                Some(UpdateChecker::new(auto_update_config.clone()))
+            }
+            None => None, // Validation guarantees this is unreachable.
+        }
+    } else {
+        None
+    };
+
     // Operational loop
     loop {
+        // Check for a self-update before each compliance pass.
+        if let Some(checker) = update_checker.as_mut() {
+            match checker.maybe_check().await {
+                Some(Ok(UpdateOutcome::Updated)) => {
+                    info!("Self-update installed; exiting so systemd restarts on the new binary");
+                    std::process::exit(0);
+                }
+                Some(Ok(UpdateOutcome::UpToDate)) => {}
+                Some(Err(details)) => {
+                    warn!(details, "Self-update check failed; will retry next interval");
+                }
+                None => {}
+            }
+        }
+
         if let Err(details) =
             perform_compliance_pass(&mut managed_localhost, &config, &auth, &repo).await
         {

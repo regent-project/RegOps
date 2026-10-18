@@ -8,7 +8,7 @@ User=regops
 Group=regops
 WorkingDirectory=/home/regops
 ExecStart=/usr/bin/regops
-Restart=on-failure
+Restart=always
 RestartSec=5
 ProtectSystem=full
 

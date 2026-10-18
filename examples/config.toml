@@ -13,3 +13,9 @@ log_format = "Raw"
 [Behavior]
 mode = "Enforce"
 interval_sec = 10
+auto_update = true
+
+[AutoUpdate]
+github_api_url = "https://api.github.com/repos/regent-project/regops/releases/latest"
+check_interval_sec = 3600
+package_format = "Auto"
