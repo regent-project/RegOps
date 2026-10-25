@@ -1,9 +1,8 @@
-# Release v0.10.1
+# Release v0.12.0
 
 ## What's Changed
 
-- Updated to use regent-sdk 0.16.1
-- Multiple fixes and improvement, especially on Storage
+- Updated to use regent-sdk 0.17.0 (SSHOQ)
 
 
 ## Installation
