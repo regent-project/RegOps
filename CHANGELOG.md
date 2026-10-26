@@ -1,8 +1,8 @@
-# Release v0.12.0
+# Release v0.12.1
 
 ## What's Changed
 
-- Updated to use regent-sdk 0.17.0 (SSHOQ)
+- Bug fix for log formats (logs were always "Raw", never "Json")
 
 
 ## Installation
