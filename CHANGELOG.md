@@ -1,8 +1,8 @@
-# Release v0.12.2
+# Release v0.12.3
 
 ## What's Changed
 
-- Fix auto update failures
+- New version for auto update validation
 
 
 ## Installation

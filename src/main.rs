@@ -55,6 +55,8 @@ async fn main() {
         _ => {}
     }
 
+    info!("RegOps starting");
+
     // Handle CLI commands that don't run the service
     match cli.command {
         None | Some(Commands::Run) => {
