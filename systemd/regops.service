@@ -10,7 +10,6 @@ WorkingDirectory=/home/regops
 ExecStart=/usr/bin/regops
 Restart=always
 RestartSec=5
-ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target

@@ -1,8 +1,8 @@
-# Release v0.12.1
+# Release v0.12.2
 
 ## What's Changed
 
-- Bug fix for log formats (logs were always "Raw", never "Json")
+- Fix auto update failures
 
 
 ## Installation

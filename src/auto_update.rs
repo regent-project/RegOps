@@ -1,6 +1,7 @@
-use std::path::Path;
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use semver::Version;
 use serde::Deserialize;
@@ -17,6 +18,13 @@ pub enum UpdateOutcome {
     /// so systemd restarts the service on the new binary.
     Updated,
 }
+
+/// Total time allowed for the GitHub API call.
+const API_TIMEOUT: Duration = Duration::from_secs(30);
+/// Total time allowed for the package download. Much longer than the API
+/// call so slow links can finish; a stalled transfer is still cut short by
+/// the client's read timeout.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// Subset of the GitHub "latest release" API response that we need.
 #[derive(Debug, Deserialize)]
@@ -71,6 +79,7 @@ async fn fetch_latest_release(
         .get(api_url)
         .header("User-Agent", concat!("regops/", env!("CARGO_PKG_VERSION")))
         .header("Accept", "application/vnd.github+json")
+        .timeout(API_TIMEOUT)
         .send()
         .await
         .map_err(|e| format!("Failed to query GitHub API: {}", e))?;
@@ -89,16 +98,48 @@ async fn fetch_latest_release(
         .map_err(|e| format!("Failed to parse GitHub API response: {}", e))
 }
 
-/// Pick the right asset from a release based on the desired package format.
+/// Architecture this binary was built for, spelled the way each package
+/// format names it in the asset file name: cargo-deb produces
+/// `regops_<ver>_<arch>.deb` (Debian names), cargo-generate-rpm produces
+/// `regops-<ver>.<arch>.rpm` (kernel names).
+fn package_arch(format: &str) -> &'static str {
+    let arch = std::env::consts::ARCH;
+    if format != "deb" {
+        return arch;
+    }
+    match arch {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        "x86" => "i386",
+        "arm" => "armhf",
+        other => other,
+    }
+}
+
+/// Pick the right asset from a release based on the desired package format
+/// and this binary's architecture.
 fn select_asset<'a>(release: &'a GitHubRelease, format: &str) -> Option<&'a GitHubAsset> {
-    let suffix = format!(".{}", format);
+    let separator = if format == "deb" { "_" } else { "." };
+    let suffix = format!("{}{}.{}", separator, package_arch(format), format);
     release
         .assets
         .iter()
         .find(|asset| asset.name.ends_with(&suffix))
 }
 
-/// Download a release asset to a temporary file. Returns the temp file path.
+/// Directory holding the downloaded package until it is installed.
+///
+/// It lives in the service user's home rather than in /tmp: a predictable
+/// name in a world-writable directory could be pre-created by another local
+/// user, either blocking the write or swapping the package before root
+/// installs it.
+fn download_dir() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| "HOME is not set; cannot choose a download directory".to_string())?;
+    Ok(PathBuf::from(home).join(".cache").join("regops"))
+}
+
+/// Download a release asset to the download directory. Returns the file path.
 async fn download_asset(
     client: &reqwest::Client,
     asset: &GitHubAsset,
@@ -107,6 +148,7 @@ async fn download_asset(
     let response = client
         .get(&asset.browser_download_url)
         .header("User-Agent", concat!("regops/", env!("CARGO_PKG_VERSION")))
+        .timeout(DOWNLOAD_TIMEOUT)
         .send()
         .await
         .map_err(|e| format!("Failed to download asset '{}': {}", asset.name, e))?;
@@ -124,7 +166,14 @@ async fn download_asset(
         .await
         .map_err(|e| format!("Failed to read download body for '{}': {}", asset.name, e))?;
 
-    let temp_path = std::env::temp_dir().join(format!("regops-update.{}", format));
+    let dir = download_dir()?;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .map_err(|e| format!("Failed to create '{}': {}", dir.display(), e))?;
+
+    let temp_path = dir.join(format!("regops-update.{}", format));
     let temp_path_str = temp_path.to_string_lossy().to_string();
 
     std::fs::write(&temp_path, &bytes)
@@ -135,12 +184,41 @@ async fn download_asset(
 }
 
 /// Install a downloaded package using the system package manager (via sudo).
+///
+/// The package manager runs in a transient systemd unit rather than as a
+/// direct child of the agent, for two reasons:
+/// - units installed by older packages set `ProtectSystem=full`, whose
+///   read-only mounts are inherited through sudo and would make /usr and
+///   /etc unwritable;
+/// - the package's postinst restarts regops.service, which kills every
+///   process in the service's cgroup, the package manager included.
+///
+/// The installer's output therefore goes to the journal, not to us
+/// (`journalctl -u regops-self-update`).
 fn install_package(package_path: &str, format: &str) -> Result<(), String> {
-    let (program, args): (&str, Vec<&str>) = match format {
-        "deb" => ("sudo", vec!["dpkg", "-i", package_path]),
-        "rpm" => ("sudo", vec!["rpm", "-U", package_path]),
+    let installer: Vec<&str> = match format {
+        // There is no terminal to answer dpkg's conffile prompt, and the
+        // operator has always edited /etc/regops/config.toml: keep theirs.
+        "deb" => vec![
+            "dpkg",
+            "--force-confdef",
+            "--force-confold",
+            "-i",
+            package_path,
+        ],
+        "rpm" => vec!["rpm", "-U", package_path],
         other => return Err(format!("Unsupported package format: {}", other)),
     };
+    let program = "sudo";
+    let mut args = vec![
+        "systemd-run",
+        "--unit=regops-self-update",
+        "--collect",
+        "--wait",
+        "--quiet",
+        "--",
+    ];
+    args.extend(installer);
 
     info!(package = %package_path, format, "Installing package");
 
@@ -156,7 +234,7 @@ fn install_package(package_path: &str, format: &str) -> Result<(), String> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         return Err(format!(
-            "Package installation failed (exit {}): {}\n{}",
+            "Package installation failed (exit {}, see `journalctl -u regops-self-update`): {}\n{}",
             output.status,
             stdout.trim(),
             stderr.trim()
@@ -177,7 +255,8 @@ pub async fn check_and_apply_update(config: &AutoUpdateConfig) -> Result<UpdateO
     info!(current = %current, "Checking for updates");
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
@@ -211,8 +290,9 @@ pub async fn check_and_apply_update(config: &AutoUpdateConfig) -> Result<UpdateO
         Some(asset) => asset,
         None => {
             return Err(format!(
-                "No .{} asset found in release '{}'. Available assets: {}",
+                "No .{} asset for architecture '{}' found in release '{}'. Available assets: {}",
                 format,
+                package_arch(format),
                 release.tag_name,
                 release
                     .assets
@@ -240,38 +320,4 @@ pub async fn check_and_apply_update(config: &AutoUpdateConfig) -> Result<UpdateO
 
     info!(latest = %latest, "Self-update installed; exiting for restart");
     Ok(UpdateOutcome::Updated)
-}
-
-/// A stateful tracker that only checks for updates at the configured interval.
-pub struct UpdateChecker {
-    config: AutoUpdateConfig,
-    last_check: Option<Instant>,
-}
-
-impl UpdateChecker {
-    pub fn new(config: AutoUpdateConfig) -> Self {
-        Self {
-            config,
-            last_check: None,
-        }
-    }
-
-    /// Returns true if enough time has elapsed since the last check (or if
-    /// this is the first call).
-    pub fn should_check(&self) -> bool {
-        match self.last_check {
-            None => true,
-            Some(last) => last.elapsed() >= Duration::from_secs(self.config.check_interval_sec),
-        }
-    }
-
-    /// Run a check if the interval has elapsed. Updates `last_check` on both
-    /// success and failure so we don't hammer the API on repeated errors.
-    pub async fn maybe_check(&mut self) -> Option<Result<UpdateOutcome, String>> {
-        if !self.should_check() {
-            return None;
-        }
-        self.last_check = Some(Instant::now());
-        Some(check_and_apply_update(&self.config).await)
-    }
 }

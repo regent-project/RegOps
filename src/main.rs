@@ -2,7 +2,7 @@ use clap::{CommandFactory, Parser};
 use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
 use regent_sdk::hosts::managed_host::{ManagedHost, ManagedHostBuilder};
 use tokio::time::{Duration, sleep};
-use tracing::{error, info, span, warn};
+use tracing::{Instrument, error, info, span, warn};
 use tracing_subscriber::{Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auto_update;
@@ -12,10 +12,10 @@ mod config;
 mod git;
 mod run;
 
-use crate::auto_update::{UpdateChecker, UpdateOutcome};
+use crate::auto_update::{UpdateOutcome, check_and_apply_update};
 use crate::cli::{Cli, Commands, CompletionCommands, ConfigCommands};
 use crate::common::init_tracing;
-use crate::config::load_config;
+use crate::config::{AutoUpdateConfig, load_config};
 use crate::run::perform_compliance_pass;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -127,11 +127,84 @@ async fn main() {
 }
 
 async fn service_main(config_path: &str) {
+    // Self-update runs beside the compliance loop rather than inside it, so
+    // a host whose startup keeps failing (repo unset, unreachable, or a
+    // release that breaks run()) can still pick up a fixed release.
+    tokio::spawn(update_loop(config_path.to_string()));
+
     loop {
         if let Err(details) = run(config_path).await {
-            report_error(&format!("unrecoverable error, retrying shortly: {}", details));
+            report_error(&format!(
+                "unrecoverable error, retrying shortly: {}",
+                details
+            ));
         }
         sleep(Duration::from_secs(10)).await;
+    }
+}
+
+/// Delay before re-reading the config when it fails to load. run() reports
+/// the load error itself, so the update loop just waits for it to be fixed.
+const UPDATE_CONFIG_RETRY: Duration = Duration::from_secs(10);
+
+async fn update_loop(config_path: String) {
+    let config = loop {
+        match load_config(&config_path) {
+            Ok(config) => break config,
+            Err(_) => sleep(UPDATE_CONFIG_RETRY).await,
+        }
+    };
+
+    // run() normally installs the subscriber, but it may not have yet.
+    if !tracing::dispatcher::has_been_set() {
+        init_tracing(&config.system_integration);
+    }
+    let auto_update_config = match (config.behavior.auto_update, config.auto_update) {
+        (true, Some(auto_update_config)) => auto_update_config,
+        // Validation guarantees the section is present when enabled.
+        _ => return,
+    };
+
+    // Created only now: a span made before the subscriber exists stays
+    // disabled. Instrumented rather than entered, as this task awaits.
+    let global_span = span!(tracing::Level::INFO, "RegOps", hostname = ?get_hostname());
+    update_checks(auto_update_config)
+        .instrument(global_span)
+        .await;
+}
+
+async fn update_checks(auto_update_config: AutoUpdateConfig) {
+    info!(
+        check_interval_sec = auto_update_config.check_interval_sec,
+        github_api_url = %auto_update_config.github_api_url,
+        "Auto-update enabled"
+    );
+
+    loop {
+        match check_and_apply_update(&auto_update_config).await {
+            Ok(UpdateOutcome::Updated) => {
+                info!("Self-update installed; exiting so systemd restarts on the new binary");
+                std::process::exit(0);
+            }
+            Ok(UpdateOutcome::UpToDate) => {}
+            Err(details) => {
+                warn!(
+                    details,
+                    "Self-update check failed; will retry next interval"
+                );
+            }
+        }
+        sleep(Duration::from_secs(auto_update_config.check_interval_sec)).await;
+    }
+}
+
+fn get_hostname() -> String {
+    match hostname::get() {
+        Ok(value) => value.to_string_lossy().to_string(),
+        Err(details) => {
+            warn!(%details, "Failed to get hostname");
+            "localhost".to_string()
+        }
     }
 }
 
@@ -144,13 +217,7 @@ async fn run(config_path: &str) -> Result<(), String> {
     init_tracing(&config.system_integration);
 
     // Get hostname first for the global tracing span and for the managed host id
-    let hostname = match hostname::get() {
-        Ok(value) => value.to_string_lossy().to_string(),
-        Err(details) => {
-            warn!(%details, "Failed to get hostname");
-            "localhost".to_string()
-        }
-    };
+    let hostname = get_hostname();
     let global_span = span!(tracing::Level::INFO, "RegOps", ?hostname);
     let _guard = global_span.enter();
 
@@ -190,40 +257,8 @@ async fn run(config_path: &str) -> Result<(), String> {
         Err(details) => return Err(format!("Failed to connect to managed host: {}", details)),
     }
 
-    // Set up the self-update checker if auto-update is enabled.
-    let mut update_checker = if config.behavior.auto_update {
-        match &config.auto_update {
-            Some(auto_update_config) => {
-                info!(
-                    check_interval_sec = auto_update_config.check_interval_sec,
-                    github_api_url = %auto_update_config.github_api_url,
-                    "Auto-update enabled"
-                );
-                Some(UpdateChecker::new(auto_update_config.clone()))
-            }
-            None => None, // Validation guarantees this is unreachable.
-        }
-    } else {
-        None
-    };
-
     // Operational loop
     loop {
-        // Check for a self-update before each compliance pass.
-        if let Some(checker) = update_checker.as_mut() {
-            match checker.maybe_check().await {
-                Some(Ok(UpdateOutcome::Updated)) => {
-                    info!("Self-update installed; exiting so systemd restarts on the new binary");
-                    std::process::exit(0);
-                }
-                Some(Ok(UpdateOutcome::UpToDate)) => {}
-                Some(Err(details)) => {
-                    warn!(details, "Self-update check failed; will retry next interval");
-                }
-                None => {}
-            }
-        }
-
         if let Err(details) =
             perform_compliance_pass(&mut managed_localhost, &config, &auth, &repo).await
         {
