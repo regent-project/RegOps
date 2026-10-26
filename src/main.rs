@@ -29,12 +29,31 @@ fn init_default_tracing() {
         .ok();
 }
 
+/// Log an error through tracing when a subscriber is installed, otherwise
+/// fall back to stderr so the message is never silently dropped (e.g. when
+/// the config file itself failed to load, before init_tracing() ran).
+fn report_error(message: &str) {
+    if tracing::dispatcher::has_been_set() {
+        error!("{}", message);
+    } else {
+        eprintln!("{}", message);
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
-    // Initialize default tracing for CLI commands
-    init_default_tracing();
+    // Initialize default tracing for CLI commands that never load the
+    // config file. The service paths (no subcommand, `run`, `run-once`)
+    // must NOT install it here: a global subscriber can only be set once,
+    // and init_tracing() installs it from the config (log_format /
+    // log_level). Installing a raw default first would silently override
+    // the configured log format.
+    match &cli.command {
+        Some(Commands::Config { .. }) | Some(Commands::Completion(_)) => init_default_tracing(),
+        _ => {}
+    }
 
     // Handle CLI commands that don't run the service
     match cli.command {
@@ -86,7 +105,7 @@ async fn main() {
         }
         Some(Commands::RunOnce) => {
             if let Err(details) = run::run_once(&cli.config_path).await {
-                error!("On-demand pass failed: {}", details);
+                report_error(&format!("On-demand pass failed: {}", details));
                 std::process::exit(1);
             }
             std::process::exit(0);
@@ -110,7 +129,7 @@ async fn main() {
 async fn service_main(config_path: &str) {
     loop {
         if let Err(details) = run(config_path).await {
-            error!("unrecoverable error, retrying shortly: {}", details);
+            report_error(&format!("unrecoverable error, retrying shortly: {}", details));
         }
         sleep(Duration::from_secs(10)).await;
     }
