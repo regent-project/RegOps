@@ -1,9 +1,8 @@
-# Release v0.12.3
+# Release v0.13.0
 
 ## What's Changed
 
-- New version for auto update validation
-
+- Updated following latest regent-sdk update (v0.18.0)
 
 ## Installation
 
