@@ -1,6 +1,4 @@
 use clap::{CommandFactory, Parser};
-use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
-use regent_sdk::hosts::managed_host::{ManagedHost, ManagedHostBuilder};
 use tokio::time::{Duration, sleep};
 use tracing::{Instrument, error, info, span, warn};
 use tracing_subscriber::{Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
@@ -10,12 +8,14 @@ mod cli;
 mod common;
 mod config;
 mod git;
+mod reporting;
 mod run;
 
 use crate::auto_update::{UpdateOutcome, check_and_apply_update};
 use crate::cli::{Cli, Commands, CompletionCommands, ConfigCommands};
 use crate::common::init_tracing;
 use crate::config::{AutoUpdateConfig, load_config};
+use crate::reporting::Reporter;
 use crate::run::perform_compliance_pass;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -42,6 +42,10 @@ fn report_error(message: &str) {
 
 #[tokio::main]
 async fn main() {
+    // Several rustls crypto providers are linked (reqwest, gix, tonic): pick one
+    // explicitly, or building a TLS configuration panics.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let cli = Cli::parse();
 
     // Initialize default tracing for CLI commands that never load the
@@ -240,29 +244,21 @@ async fn run(config_path: &str) -> Result<(), String> {
 
     let auth = config.authentication_mode();
 
-    // Regent initialization.
-    // We expect the user which runs Regops to have required permissions with
-    // non-interactive sudo capability.
-    let managed_host_builder = ManagedHostBuilder::new(
-        &hostname,
-        "localhost",
-        Some(ConnectionMethod::Localhost(TargetUser::current_user())),
-    );
-
-    let mut managed_localhost: ManagedHost = match managed_host_builder.build(None).await {
-        Ok(managed_host) => managed_host,
-        Err(details) => return Err(format!("Failed to build managed host: {}", details)),
+    let host_id = config.host_id(&hostname);
+    let reporter = match config.regency_reporting() {
+        Some(regency) => {
+            info!(endpoint = %regency.endpoint, host_id, "Reporting outcomes to regency");
+            Some(Reporter::new(regency, &host_id)?)
+        }
+        None => None,
     };
-
-    match managed_localhost.connect().await {
-        Ok(()) => {}
-        Err(details) => return Err(format!("Failed to connect to managed host: {}", details)),
-    }
+    // Stopped when run() returns (e.g. to reload the configuration)
+    let _sender = reporter.clone().map(|reporter| AbortOnDrop(tokio::spawn(reporter.run_sender())));
 
     // Operational loop
     loop {
         if let Err(details) =
-            perform_compliance_pass(&mut managed_localhost, &config, &auth, &repo).await
+            perform_compliance_pass(&config, &auth, &repo, &host_id, reporter.as_deref()).await
         {
             error!(
                 details,
@@ -270,5 +266,14 @@ async fn run(config_path: &str) -> Result<(), String> {
             );
         }
         sleep(Duration::from_secs(config.behavior.interval_sec)).await;
+    }
+}
+
+/// Aborts the task when dropped.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }

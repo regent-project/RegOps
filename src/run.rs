@@ -1,11 +1,14 @@
-use regent_sdk::ExpectedState;
 use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
-use regent_sdk::hosts::managed_host::{ManagedHost, ManagedHostBuilder};
+use regent_sdk::hosts::managed_host::ManagedHostBuilder;
+use regent_sdk::state::compliance::HostStatus;
+use regent_sdk::task::{Job, RegentTask, RegentTaskResult};
+use regent_sdk::{ExpectedState, RegentError};
 use tracing::{error, info, span, warn};
 
 use crate::common::{GitAuthentication, RunningMode, init_tracing};
 use crate::config::{RegOpsConfig, load_config};
-use crate::git::{clone_fresh, git_pull, local_repo_matches_expected};
+use crate::git::{clone_fresh, git_pull, head_commit, local_repo_matches_expected};
+use crate::reporting::Reporter;
 
 pub async fn run_once(config_path: &str) -> Result<(), String> {
     let config = match load_config(config_path) {
@@ -81,47 +84,35 @@ pub async fn run_once(config_path: &str) -> Result<(), String> {
         }
     };
 
-    let managed_host_builder = ManagedHostBuilder::new(
-        &hostname,
-        "localhost",
-        Some(ConnectionMethod::Localhost(TargetUser::current_user())),
-    );
-
-    let mut managed_localhost: ManagedHost = match managed_host_builder.build(None).await {
-        Ok(managed_host) => managed_host,
-        Err(details) => return Err(format!("Failed to build managed host: {}", details)),
+    let host_id = config.host_id(&hostname);
+    let reporter = match config.regency_reporting() {
+        Some(regency) => Some(Reporter::new(regency, &host_id)?),
+        None => None,
     };
 
-    match managed_localhost.connect().await {
-        Ok(()) => {}
-        Err(details) => return Err(format!("Failed to connect to managed host: {}", details)),
-    }
-
-    match &config.behavior.mode {
-        RunningMode::Assess => {
-            match managed_localhost
-                .assess_compliance(&expected_state, true)
-                .await
-            {
-                Ok(_assessment) => {}
-                Err(details) => warn!(%details, "Failed to assess compliance"),
-            }
+    let result = run_task(&config, &host_id, expected_state).await;
+    log_outcome(&result);
+    if let Some(reporter) = &reporter {
+        reporter.record(&result, head_commit(&config.git.local_path))?;
+        // Best effort: what cannot be sent now stays spooled for the service
+        if let Err(details) = reporter.flush().await {
+            warn!(details, "Outcome spooled but not reported yet");
         }
-        RunningMode::Enforce => match managed_localhost.reach_compliance(&expected_state).await {
-            Ok(_outcome) => {}
-            Err(details) => warn!(%details, "Failed to enforce compliance"),
-        },
     }
 
     info!("On-demand automation pass completed");
     Ok(())
 }
 
+/// One pass: sync the repository, run the expected state as a `RegentTask` on
+/// localhost (so the outcome is the same `RegentTaskResult` remote runners
+/// produce), log it and hand it to the reporter if any.
 pub async fn perform_compliance_pass(
-    managed_localhost: &mut ManagedHost,
     config: &RegOpsConfig,
     auth: &GitAuthentication,
     repo: &str,
+    host_id: &str,
+    reporter: Option<&Reporter>,
 ) -> Result<(), String> {
     if !local_repo_matches_expected(&config.git.local_path, repo, &config.git.branch) {
         match clone_fresh(&config.git.local_path, repo, &config.git.branch, auth) {
@@ -169,21 +160,52 @@ pub async fn perform_compliance_pass(
         }
     };
 
-    match &config.behavior.mode {
-        RunningMode::Assess => {
-            match managed_localhost
-                .assess_compliance(&expected_state, true)
-                .await
-            {
-                Ok(_assessment) => {}
-                Err(details) => warn!(%details, "Failed to assess compliance"),
-            }
-        }
-        RunningMode::Enforce => match managed_localhost.reach_compliance(&expected_state).await {
-            Ok(_outcome) => {}
-            Err(details) => warn!(%details, "Failed to enforce compliance"),
-        },
+    let result = run_task(config, host_id, expected_state).await;
+    log_outcome(&result);
+    if let Some(reporter) = reporter {
+        reporter.record(&result, head_commit(&config.git.local_path))?;
     }
 
     Ok(())
+}
+
+/// Run the expected state on localhost as a `RegentTask`. Always returns a
+/// result: failures (host busy, connection, …) are inside it.
+async fn run_task(config: &RegOpsConfig, host_id: &str, expected_state: ExpectedState) -> RegentTaskResult {
+    // We expect the user which runs Regops to have required permissions with
+    // non-interactive sudo capability.
+    let mut managed_host_builder = ManagedHostBuilder::new(
+        host_id,
+        "localhost",
+        Some(ConnectionMethod::Localhost(TargetUser::current_user())),
+    );
+    managed_host_builder.set_host_lock(config.host_lock_settings());
+    let job = match config.behavior.mode {
+        RunningMode::Assess => Job::Assess,
+        RunningMode::Enforce => Job::Reach,
+    };
+    RegentTask::from(managed_host_builder, expected_state, job)
+        .run(None)
+        .await
+}
+
+fn log_outcome(result: &RegentTaskResult) {
+    match result.outcome() {
+        Ok(status) => match status.state {
+            HostStatus::AlreadyCompliant => info!("Already compliant"),
+            HostStatus::NotCompliant => {
+                warn!(remediations = ?status.all_remediations(), "Not compliant")
+            }
+            HostStatus::ReachComplianceSuccess => info!("Compliance reached"),
+            HostStatus::ReachComplianceFailed => warn!("Failed to reach compliance"),
+            HostStatus::Aborted => warn!("Pass aborted"),
+        },
+        Err(RegentError::HostBusy(details)) => {
+            info!(
+                details,
+                "Host busy with another Regent operation, skipping this pass"
+            )
+        }
+        Err(details) => warn!(%details, "Compliance pass failed"),
+    }
 }

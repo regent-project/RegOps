@@ -7,6 +7,9 @@ Type=simple
 User=regops
 Group=regops
 WorkingDirectory=/home/regops
+# /var/lib/regops (owned by the service user): spool of unsent outcomes and
+# regops-managed TLS material when reporting to regency
+StateDirectory=regops
 ExecStart=/usr/bin/regops
 Restart=always
 RestartSec=5

@@ -21,6 +21,12 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install protoc 36.1 (exact version required by regent-sdk's proto feature)
+        run: |
+          curl -sSfL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-linux-x86_64.zip
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
+          protoc --version
+
       - name: Install cargo-generate-rpm
         uses: taiki-e/install-action@v2
         with:

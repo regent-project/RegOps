@@ -3,8 +3,8 @@ use tracing::{error, info, warn};
 
 use crate::common::{LogFormat, LogLevel, PackageFormat, RunningMode, ensure_directory_exists};
 use crate::config::{
-    AuthMode, AutoUpdateConfig, BehaviorConfig, GitConfig, RegOpsConfig, SystemIntegrationConfig,
-    load_config,
+    AuthMode, AutoUpdateConfig, BehaviorConfig, GitConfig, HostLockConfig, RegOpsConfig,
+    SystemIntegrationConfig, load_config,
 };
 use std::os::unix::fs::PermissionsExt;
 
@@ -170,6 +170,9 @@ pub fn config_init(
             log_format,
         },
         auto_update: auto_update_section,
+        host_lock: HostLockConfig::default(),
+        reporting: crate::common::Reporting::None,
+        regency: None,
     };
 
     let toml_string = toml::to_string(&config).unwrap_or_else(|e| {

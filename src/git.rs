@@ -420,3 +420,11 @@ pub fn git_pull(local_path: &str, auth: &GitAuthentication) -> Result<(), String
 
     Ok(())
 }
+
+/// Commit id of HEAD in the local copy, if it can be read (reported with outcomes as
+/// the revision of the expected state that was applied).
+pub fn head_commit(local_path: &str) -> Option<String> {
+    let repo = gix::open(local_path).ok()?;
+    let commit = repo.head_commit().ok()?;
+    Some(commit.id().to_string())
+}
