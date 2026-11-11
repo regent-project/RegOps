@@ -10,6 +10,8 @@ mod config;
 mod git;
 mod reporting;
 mod run;
+#[cfg(windows)]
+mod winservice;
 
 use crate::auto_update::{UpdateOutcome, check_and_apply_update};
 use crate::cli::{Cli, Commands, CompletionCommands, ConfigCommands};
@@ -40,8 +42,18 @@ fn report_error(message: &str) {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // Windows: under the Service Control Manager (MSI service registration)
+    #[cfg(windows)]
+    if std::env::args().any(|arg| arg == "--windows-service") {
+        winservice::run();
+    }
+    tokio::runtime::Runtime::new()
+        .expect("tokio runtime")
+        .block_on(async_main());
+}
+
+pub(crate) async fn async_main() {
     // Several rustls crypto providers are linked (reqwest, gix, tonic): pick one
     // explicitly, or building a TLS configuration panics.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();

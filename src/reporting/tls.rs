@@ -2,6 +2,7 @@
 //! the gRPC channel.
 
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::time::Duration;
@@ -186,11 +187,13 @@ fn write_identity(config: &RegencyConfig, cert_pem: &str, key_pem: &str) -> Resu
     }
     let key_tmp = format!("{}.tmp", config.key_path);
     let cert_tmp = format!("{}.tmp", config.cert_path);
-    let mut key_file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    // owner only (on Windows, %ProgramData%\regops inherits an ACL limited
+    // to SYSTEM and administrators)
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut key_file = options
         .open(&key_tmp)
         .map_err(|e| format!("Failed to write {}: {}", key_tmp, e))?;
     key_file

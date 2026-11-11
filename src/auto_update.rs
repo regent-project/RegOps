@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -56,6 +57,8 @@ fn detect_package_format(requested: PackageFormat) -> &'static str {
     match requested {
         PackageFormat::Deb => "deb",
         PackageFormat::Rpm => "rpm",
+        PackageFormat::Msi => "msi",
+        PackageFormat::Auto if cfg!(windows) => "msi",
         PackageFormat::Auto => {
             if Path::new("/usr/bin/dpkg").exists() {
                 "deb"
@@ -119,7 +122,12 @@ fn package_arch(format: &str) -> &'static str {
 /// Pick the right asset from a release based on the desired package format
 /// and this binary's architecture.
 fn select_asset<'a>(release: &'a GitHubRelease, format: &str) -> Option<&'a GitHubAsset> {
-    let separator = if format == "deb" { "_" } else { "." };
+    // regops_<ver>_<arch>.deb, regops-<ver>.<arch>.rpm, regops-<ver>-<arch>.msi
+    let separator = match format {
+        "deb" => "_",
+        "msi" => "-",
+        _ => ".",
+    };
     let suffix = format!("{}{}.{}", separator, package_arch(format), format);
     release
         .assets
@@ -134,6 +142,10 @@ fn select_asset<'a>(release: &'a GitHubRelease, format: &str) -> Option<&'a GitH
 /// user, either blocking the write or swapping the package before root
 /// installs it.
 fn download_dir() -> Result<PathBuf, String> {
+    // Windows: the service's state directory (SYSTEM and administrators only)
+    if cfg!(windows) {
+        return Ok(crate::common::state_dir().join("cache"));
+    }
     let home = std::env::var_os("HOME")
         .ok_or_else(|| "HOME is not set; cannot choose a download directory".to_string())?;
     Ok(PathBuf::from(home).join(".cache").join("regops"))
@@ -167,9 +179,11 @@ async fn download_asset(
         .map_err(|e| format!("Failed to read download body for '{}': {}", asset.name, e))?;
 
     let dir = download_dir()?;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder
         .create(&dir)
         .map_err(|e| format!("Failed to create '{}': {}", dir.display(), e))?;
 
@@ -196,6 +210,9 @@ async fn download_asset(
 /// The installer's output therefore goes to the journal, not to us
 /// (`journalctl -u regops-self-update`).
 fn install_package(package_path: &str, format: &str) -> Result<(), String> {
+    if format == "msi" {
+        return install_msi(package_path);
+    }
     let installer: Vec<&str> = match format {
         // There is no terminal to answer dpkg's conffile prompt, and the
         // operator has always edited /etc/regops/config.toml: keep theirs.
@@ -243,6 +260,22 @@ fn install_package(package_path: &str, format: &str) -> Result<(), String> {
 
     info!(format, "Package installed successfully");
     Ok(())
+}
+
+/// Windows: msiexec runs detached, since the MSI stops this service (our
+/// process) before replacing the binary and starts it again afterwards.
+/// Its log goes next to the package.
+fn install_msi(package_path: &str) -> Result<(), String> {
+    let log = format!("{package_path}.log");
+    info!(package = %package_path, log = %log, "Installing MSI package");
+    std::process::Command::new("msiexec")
+        .args(["/i", package_path, "/qn", "/norestart", "/l*v", &log])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to run msiexec: {}", e))
 }
 
 /// Check for and install a self-update if one is available.

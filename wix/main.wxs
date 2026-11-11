@@ -1,0 +1,59 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  MSI of regops (Windows service), built by cargo-wix in release-msi.yml.
+  The UpgradeCode must never change (it ties versions together for upgrades).
+-->
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?endif ?>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+  <Product Id='*' Name='RegOps' UpgradeCode='{1B2B92FD-26D2-4717-91E4-52CB2C889D07}' Manufacturer='regent-project'
+           Language='1033' Codepage='1252' Version='$(var.Version)'>
+    <Package Id='*' Keywords='Installer' Description='RegOps: GitOps agent for localhost configuration management'
+             Manufacturer='regent-project' InstallerVersion='500' Languages='1033' Compressed='yes'
+             InstallScope='perMachine' SummaryCodepage='1252' />
+    <MajorUpgrade Schedule='afterInstallInitialize' DowngradeErrorMessage='A newer version of [ProductName] is already installed.' />
+    <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' />
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+      <Directory Id='$(var.PlatformProgramFilesFolder)'>
+        <Directory Id='APPLICATIONFOLDER' Name='RegOps'>
+          <Component Id='binary' Guid='*'>
+            <File Id='exe' Name='regops.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\regops.exe' KeyPath='yes' />
+            <!-- LocalSystem: regops applies expected states to this machine.
+                 Installed manual: write the configuration, then
+                 Set-Service regops -StartupType Automatic; Start-Service regops -->
+            <ServiceInstall Id='service' Name='regops' DisplayName='RegOps'
+                            Description='GitOps agent: applies expected states pulled from Git'
+                            Type='ownProcess' Start='demand' ErrorControl='normal' Account='LocalSystem'
+                            Arguments='--windows-service --config-path "[CommonAppDataFolder]regops\config.toml"'>
+              <ServiceConfigFailureActions OnInstall='yes' OnReinstall='yes' ResetPeriod='86400'>
+                <Failure Action='restartService' Delay='10000' />
+                <Failure Action='restartService' Delay='10000' />
+                <Failure Action='restartService' Delay='60000' />
+              </ServiceConfigFailureActions>
+            </ServiceInstall>
+            <!-- stopped during upgrades (self-update included), started again afterwards -->
+            <ServiceControl Id='serviceControl' Name='regops' Start='install' Stop='both' Remove='uninstall' Wait='yes' />
+          </Component>
+          <Component Id='path' Guid='{6A1F184C-8A38-416B-887D-AB22D0E7AB74}' KeyPath='yes'>
+            <Environment Id='PATH' Name='PATH' Value='[APPLICATIONFOLDER]' Permanent='no' Part='last' Action='set' System='yes' />
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id='CommonAppDataFolder'>
+        <Directory Id='DataFolder' Name='regops'>
+          <Component Id='config' Guid='{E9767540-5627-4B38-B4C9-9B6B9975DEA2}' NeverOverwrite='yes' Permanent='yes'>
+            <File Id='configFile' Name='config.toml' Source='default_config\config.windows.toml' KeyPath='yes' />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+    <Feature Id='Main' Level='1'>
+      <ComponentRef Id='binary' />
+      <ComponentRef Id='path' />
+      <ComponentRef Id='config' />
+    </Feature>
+  </Product>
+</Wix>

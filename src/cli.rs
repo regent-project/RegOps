@@ -6,6 +6,7 @@ use crate::config::{
     AuthMode, AutoUpdateConfig, BehaviorConfig, GitConfig, HostLockConfig, RegOpsConfig,
     SystemIntegrationConfig, load_config,
 };
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 #[derive(Parser, Debug)]
@@ -13,8 +14,12 @@ use std::os::unix::fs::PermissionsExt;
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "GitOps agent for localhost configuration management", long_about = None)]
 pub struct Cli {
-    #[arg(short, long, global = true, default_value = "/etc/regops/config.toml")]
+    #[arg(short, long, global = true, default_value_t = crate::common::default_config_path())]
     pub config_path: String,
+
+    /// Run under the Windows Service Control Manager (set by the MSI).
+    #[arg(long, global = true, hide = true)]
+    pub windows_service: bool,
 
     /// No subcommand: run the service (matches the shipped systemd unit).
     #[command(subcommand)]
@@ -188,6 +193,7 @@ pub fn config_init(
     }
 
     // The config now holds a secret: readable by the regops service user only.
+    #[cfg(unix)]
     if token.is_some() {
         if let Err(details) =
             std::fs::set_permissions(config_path, std::fs::Permissions::from_mode(0o640))

@@ -215,11 +215,19 @@ impl RegencyConfig {
 }
 
 fn default_cert_path() -> String {
-    "/var/lib/regops/regency/client.pem".to_string()
+    crate::common::state_dir()
+        .join("regency")
+        .join("client.pem")
+        .to_string_lossy()
+        .to_string()
 }
 
 fn default_key_path() -> String {
-    "/var/lib/regops/regency/client.key".to_string()
+    crate::common::state_dir()
+        .join("regency")
+        .join("client.key")
+        .to_string_lossy()
+        .to_string()
 }
 
 fn default_renew_before_sec() -> u64 {
@@ -227,7 +235,10 @@ fn default_renew_before_sec() -> u64 {
 }
 
 fn default_spool_dir() -> String {
-    "/var/lib/regops/spool".to_string()
+    crate::common::state_dir()
+        .join("spool")
+        .to_string_lossy()
+        .to_string()
 }
 
 fn default_spool_max_entries() -> usize {

@@ -1,3 +1,32 @@
+# Release v0.15.0
+
+## What's Changed
+
+### Windows
+
+- RegOps builds and runs on Windows, as the Windows service `regops`,
+  installed by the new MSI package (`regops-<version>-x86_64.msi`; runs as
+  LocalSystem, restarted on failure).
+- Configuration and state live under `C:\ProgramData\regops\` (`config.toml`,
+  `spool`, the `regency` client identity). `default_config/config.windows.toml`
+  is installed as the initial configuration and never overwritten by
+  upgrades.
+- Self-update on Windows: `PackageFormat = "Msi"` (or the default `Auto`)
+  downloads the release's `.msi` and installs it with `msiexec`.
+- Windows hosts get regent-sdk's Windows support (`windows` feature): the host
+  lock (on a lock file) and the attributes that work on Windows.
+
+### Other changes
+
+- Updated following latest regent-sdk update (v0.23.1). The SSHOQ client
+  crate is now `sshoq` 0.1.3 (renamed from `shhoq`).
+- New release workflow `release-msi.yml` (cargo-wix), next to the deb and rpm
+  ones.
+
+### Upgrade notes
+
+- Linux: nothing to do; configuration, paths and packages are unchanged.
+
 # Release v0.14.0
 
 ## What's Changed

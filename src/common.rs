@@ -63,6 +63,34 @@ pub enum PackageFormat {
     Deb,
     /// RPM package (.rpm), installed with rpm.
     Rpm,
+    /// Windows installer (.msi), installed with msiexec.
+    Msi,
+}
+
+/// Directory of regops' state: `/var/lib/regops`, or `%ProgramData%\regops`
+/// on Windows.
+pub fn state_dir() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let base = std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".to_string());
+        std::path::Path::new(&base).join("regops")
+    }
+    #[cfg(not(windows))]
+    {
+        std::path::PathBuf::from("/var/lib/regops")
+    }
+}
+
+/// `/etc/regops/config.toml`, or `%ProgramData%\regops\config.toml` on Windows.
+pub fn default_config_path() -> String {
+    #[cfg(windows)]
+    {
+        state_dir().join("config.toml").to_string_lossy().to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        "/etc/regops/config.toml".to_string()
+    }
 }
 
 /// Where compliance outcomes are reported.

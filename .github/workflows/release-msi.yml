@@ -1,0 +1,47 @@
+name: Build and Release MSI Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-msi:
+    name: Build MSI and Release
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc 36.1 (exact version required by regent-sdk's proto feature)
+        shell: bash
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/protoc.zip" https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-win64.zip
+          unzip -o "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+
+      - name: Install cargo-wix
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-wix
+
+      - name: Build MSI package
+        shell: bash
+        run: |
+          cargo build --release --locked
+          # regops-<version>-x86_64.msi: the asset name the self-update looks for
+          cargo wix --no-build --nocapture -o target/wix/
+
+      - name: Release and upload .msi
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/wix/*.msi
+          body_path: CHANGELOG.md

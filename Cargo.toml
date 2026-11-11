@@ -1,6 +1,6 @@
 [package]
 name = "regops"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 authors     = ["Romain SUZANNE <romzorus591@gmail.com>"]
 repository  = "https://github.com/regent-project/regops.git"
@@ -12,7 +12,7 @@ categories  = ["config"]
 [dependencies]
 gix = { version = "0.90.0", features = ["blocking-network-client", "blocking-http-transport-reqwest", "blocking-http-transport-reqwest-rust-tls"] }
 hostname = "0.4.2"
-regent-sdk = { version = "0.21.0", features = ["grpc"] }
+regent-sdk = { version = "0.23.1", features = ["grpc"] }
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.54.1", features = ["full"] }
 toml = "1.2.0"
@@ -31,6 +31,11 @@ rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "
 x509-parser = "0.18"
 sha2 = "0.11"
 chrono = "0.4"
+
+# Windows (run as a Windows service; Windows attributes of regent-sdk)
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+regent-sdk = { version = "0.23.1", features = ["grpc", "windows"] }
 
 [dev-dependencies]
 tokio-stream = { version = "0.1", features = ["net"] }
