@@ -56,3 +56,8 @@ auto_update = false
 # spool_max_entries = 1000
 # retry_interval_sec = 30
 # request_timeout_sec = 10
+# # Live view: stream each pass to regency while it runs (best effort)
+# live = true
+# # Log of each pass sent with its outcome (bytes, estimate; 0 = none); regency
+# # may crop it further to its own "run log" setting
+# run_log_max_bytes = 1048576

@@ -1,4 +1,5 @@
 use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
+use regent_sdk::hosts::live::RunLog;
 use regent_sdk::hosts::managed_host::ManagedHostBuilder;
 use regent_sdk::state::compliance::HostStatus;
 use regent_sdk::task::{Job, RegentTask, RegentTaskResult};
@@ -90,10 +91,10 @@ pub async fn run_once(config_path: &str) -> Result<(), String> {
         None => None,
     };
 
-    let result = run_task(&config, &host_id, expected_state).await;
+    let (result, run_log) = run_task(&config, &host_id, expected_state, reporter.as_deref()).await;
     log_outcome(&result);
     if let Some(reporter) = &reporter {
-        reporter.record(&result, head_commit(&config.git.local_path))?;
+        reporter.record(&result, head_commit(&config.git.local_path), run_log.as_ref())?;
         // Best effort: what cannot be sent now stays spooled for the service
         if let Err(details) = reporter.flush().await {
             warn!(details, "Outcome spooled but not reported yet");
@@ -160,18 +161,24 @@ pub async fn perform_compliance_pass(
         }
     };
 
-    let result = run_task(config, host_id, expected_state).await;
+    let (result, run_log) = run_task(config, host_id, expected_state, reporter).await;
     log_outcome(&result);
     if let Some(reporter) = reporter {
-        reporter.record(&result, head_commit(&config.git.local_path))?;
+        reporter.record(&result, head_commit(&config.git.local_path), run_log.as_ref())?;
     }
 
     Ok(())
 }
 
 /// Run the expected state on localhost as a `RegentTask`. Always returns a
-/// result: failures (host busy, connection, …) are inside it.
-async fn run_task(config: &RegOpsConfig, host_id: &str, expected_state: ExpectedState) -> RegentTaskResult {
+/// result: failures (host busy, connection, …) are inside it. With a reporter,
+/// the pass runs live (streamed to regency) and its log is returned too.
+async fn run_task(
+    config: &RegOpsConfig,
+    host_id: &str,
+    expected_state: ExpectedState,
+    reporter: Option<&Reporter>,
+) -> (RegentTaskResult, Option<RunLog>) {
     // We expect the user which runs Regops to have required permissions with
     // non-interactive sudo capability.
     let mut managed_host_builder = ManagedHostBuilder::new(
@@ -184,9 +191,15 @@ async fn run_task(config: &RegOpsConfig, host_id: &str, expected_state: Expected
         RunningMode::Assess => Job::Assess,
         RunningMode::Enforce => Job::Reach,
     };
-    RegentTask::from(managed_host_builder, expected_state, job)
-        .run(None)
-        .await
+    let mut task = RegentTask::from(managed_host_builder, expected_state, job);
+    let Some(reporter) = reporter else {
+        return (task.run(None).await, None);
+    };
+    let (sink, live) = reporter.start_live();
+    task.enable_live(Some(sink));
+    let result = task.run(None).await;
+    task.disable_live(); // drops the sink: the collector ends
+    (result, Some(live.finish().await))
 }
 
 fn log_outcome(result: &RegentTaskResult) {

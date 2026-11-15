@@ -188,6 +188,14 @@ pub struct RegencyConfig {
     /// Timeout of one call to the endpoint.
     #[serde(default = "default_request_timeout_sec")]
     pub request_timeout_sec: u64,
+    /// Stream the live view of each pass to the endpoint while it runs (best
+    /// effort, never slows the pass down).
+    #[serde(default = "default_live")]
+    pub live: bool,
+    /// Size limit (bytes, estimate) of the log of a pass sent with its outcome;
+    /// 0 = no log. regency may crop it further to its own setting.
+    #[serde(default = "default_run_log_max_bytes")]
+    pub run_log_max_bytes: u64,
 }
 
 impl RegencyConfig {
@@ -251,6 +259,14 @@ fn default_retry_interval_sec() -> u64 {
 
 fn default_request_timeout_sec() -> u64 {
     10
+}
+
+fn default_live() -> bool {
+    true
+}
+
+fn default_run_log_max_bytes() -> u64 {
+    1024 * 1024
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

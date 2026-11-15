@@ -39,6 +39,16 @@ pub async fn client_identity(config: &RegencyConfig, host_id: &str) -> Result<Id
 /// gRPC channel to the endpoint, with the given client identity (none: only for
 /// enrollment).
 pub async fn channel(config: &RegencyConfig, identity: Option<Identity>) -> Result<Channel, String> {
+    channel_with_timeout(config, identity, Some(Duration::from_secs(config.request_timeout_sec))).await
+}
+
+/// Same as [`channel`], with another per-call timeout (`None`: none, for a call
+/// lasting a whole pass such as `ReportLive`; connecting stays bounded).
+pub async fn channel_with_timeout(
+    config: &RegencyConfig,
+    identity: Option<Identity>,
+    request_timeout: Option<Duration>,
+) -> Result<Channel, String> {
     let ca = std::fs::read(&config.ca_cert_path)
         .map_err(|e| format!("Failed to read {}: {}", config.ca_cert_path, e))?;
     let mut tls = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca));
@@ -48,13 +58,15 @@ pub async fn channel(config: &RegencyConfig, identity: Option<Identity>) -> Resu
     if let Some(identity) = identity {
         tls = tls.identity(identity);
     }
-    let timeout = Duration::from_secs(config.request_timeout_sec);
-    Endpoint::from_shared(config.endpoint.clone())
+    let mut endpoint = Endpoint::from_shared(config.endpoint.clone())
         .map_err(|e| format!("Invalid regency.endpoint: {}", e))?
         .tls_config(tls)
         .map_err(|e| format!("Invalid TLS configuration: {}", e))?
-        .connect_timeout(timeout)
-        .timeout(timeout)
+        .connect_timeout(Duration::from_secs(config.request_timeout_sec));
+    if let Some(timeout) = request_timeout {
+        endpoint = endpoint.timeout(timeout);
+    }
+    endpoint
         .connect()
         .await
         .map_err(|e| format!("Failed to connect to {}: {}", config.endpoint, e))

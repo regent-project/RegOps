@@ -107,6 +107,12 @@ task: the compliance loop never waits for the network, and an outcome is deleted
 only once the endpoint accepted it (retried with the same idempotency key).
 Outcomes the endpoint refuses for good go to `spool/rejected/`.
 
+Live view: while a pass runs, RegOps streams what it does (attributes, commands and
+their output, secrets redacted) to the endpoint (`live = true`, default), so regency
+shows it as it happens. This is best effort: nothing is retried, and the pass never
+waits for it. The log of the pass (up to `run_log_max_bytes`, 1 MiB by default) is
+sent with its outcome, through the spool, for regency's history.
+
 Client certificate (`tls_mode`):
 
 - `ExternalCa` (default): issued by your PKI; set `cert_path` / `key_path`.

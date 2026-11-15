@@ -5,7 +5,10 @@
 //! separate task ([`Reporter::run_sender`]) pushes spooled outcomes to the
 //! endpoint over mTLS and deletes each one only once the endpoint accepted it;
 //! after a failure it retries the same message (same idempotency key) later.
+//! While a pass runs, its live view is streamed to the endpoint ([`live`]) and
+//! its log is spooled with the outcome.
 
+pub mod live;
 mod spool;
 pub mod tls;
 
@@ -16,6 +19,7 @@ use std::time::Duration;
 use regent_sdk::proto::grpc::reporting::reporting_client::ReportingClient;
 use regent_sdk::proto::runtime::{Parse, Serialize};
 use regent_sdk::proto::{ReportOutcomeRequest, ReporterInfo};
+use regent_sdk::hosts::live::{LiveSink, RunLog};
 use regent_sdk::task::RegentTaskResult;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
@@ -40,8 +44,19 @@ impl Reporter {
         }))
     }
 
-    /// Spool one outcome for sending.
-    pub fn record(&self, result: &RegentTaskResult, source_revision: Option<String>) -> Result<(), String> {
+    /// The live view of a pass: give the sink to the task, then
+    /// [`live::LivePass::finish`] it once the task is over.
+    pub fn start_live(&self) -> (LiveSink, live::LivePass) {
+        live::LivePass::start(&self.config, &self.host_id)
+    }
+
+    /// Spool one outcome (with the pass's log, if kept) for sending.
+    pub fn record(
+        &self,
+        result: &RegentTaskResult,
+        source_revision: Option<String>,
+        run_log: Option<&RunLog>,
+    ) -> Result<(), String> {
         let mut reporter = ReporterInfo::new();
         reporter.set_agent("regops");
         reporter.set_agent_version(env!("CARGO_PKG_VERSION"));
@@ -52,6 +67,9 @@ impl Reporter {
         let mut request = ReportOutcomeRequest::new();
         request.set_result(result.to_proto());
         request.set_reporter(reporter);
+        if let Some(run_log) = run_log.filter(|log| !log.updates().is_empty() || log.is_truncated()) {
+            request.set_run_log(run_log.to_proto());
+        }
         let bytes = request
             .serialize()
             .map_err(|e| format!("Failed to serialize the outcome: {:?}", e))?;
@@ -146,7 +164,7 @@ mod tests {
     use regent_sdk::proto::grpc::reporting::reporting_server::{Reporting, ReportingServer};
     use regent_sdk::proto::{
         EnrollRequest, EnrollResponse, RenewCertificateRequest, RenewCertificateResponse,
-        ReportOutcomeResponse,
+        ReportLiveRequest, ReportLiveResponse, ReportOutcomeResponse,
     };
     use regent_sdk::state::compliance::ManagedHostStatus;
     use regent_sdk::task::Job;
@@ -181,6 +199,10 @@ mod tests {
     #[derive(Default)]
     struct Calls {
         reported: Vec<String>,
+        /// (host_id, seq) of each live update received
+        live: Vec<(String, u64)>,
+        /// number of updates in the run log of each outcome
+        run_logs: Vec<usize>,
         enrolled: usize,
         renewed: usize,
     }
@@ -203,8 +225,36 @@ mod tests {
             if host_id != "web-01" {
                 return Err(Status::invalid_argument("host_id differs from the identity"));
             }
-            self.calls.lock().unwrap().reported.push(host_id);
+            let mut calls = self.calls.lock().unwrap();
+            calls.reported.push(host_id);
+            if request.get_ref().has_run_log() {
+                calls.run_logs.push(request.get_ref().run_log().updates().len());
+            }
             Ok(Response::new(ReportOutcomeResponse::new()))
+        }
+
+        async fn report_live(
+            &self,
+            request: Request<tonic::Streaming<ReportLiveRequest>>,
+        ) -> Result<Response<ReportLiveResponse>, Status> {
+            if request.peer_certs().is_none_or(|certs| certs.is_empty()) {
+                return Err(Status::unauthenticated("client certificate required"));
+            }
+            let mut stream = request.into_inner();
+            let mut accepted = 0;
+            while let Some(batch) = stream.message().await? {
+                for update in batch.updates() {
+                    self.calls
+                        .lock()
+                        .unwrap()
+                        .live
+                        .push((update.host_id().to_string(), update.seq()));
+                    accepted += 1;
+                }
+            }
+            let mut response = ReportLiveResponse::new();
+            response.set_accepted(accepted);
+            Ok(Response::new(response))
         }
 
         async fn enroll(&self, request: Request<EnrollRequest>) -> Result<Response<EnrollResponse>, Status> {
@@ -279,6 +329,8 @@ mod tests {
             spool_max_entries: 10,
             retry_interval_sec: 1,
             request_timeout_sec: 5,
+            live: true,
+            run_log_max_bytes: 1024 * 1024,
         };
         Setup { dir, config, ca, calls }
     }
@@ -304,8 +356,8 @@ mod tests {
         std::fs::write(&setup.config.key_path, key).unwrap();
 
         let reporter = Reporter::new(&setup.config, "web-01").unwrap();
-        reporter.record(&result("web-01", "k1"), Some("abc123".to_string())).unwrap();
-        reporter.record(&result("someone-else", "k2"), None).unwrap();
+        reporter.record(&result("web-01", "k1"), Some("abc123".to_string()), None).unwrap();
+        reporter.record(&result("someone-else", "k2"), None, None).unwrap();
         reporter.flush().await.unwrap();
 
         assert_eq!(setup.calls.lock().unwrap().reported, vec!["web-01".to_string()]);
@@ -321,7 +373,7 @@ mod tests {
 
         // no certificate yet: enrollment with the token, then the report
         let reporter = Reporter::new(&setup.config, "web-01").unwrap();
-        reporter.record(&result("web-01", "k1"), None).unwrap();
+        reporter.record(&result("web-01", "k1"), None, None).unwrap();
         reporter.flush().await.unwrap();
         {
             let calls = setup.calls.lock().unwrap();
@@ -332,10 +384,56 @@ mod tests {
         // (the test CA issues certificates valid until 4096: use the widest window)
         setup.config.renew_before_sec = u64::MAX;
         let reporter = Reporter::new(&setup.config, "web-01").unwrap();
-        reporter.record(&result("web-01", "k2"), None).unwrap();
+        reporter.record(&result("web-01", "k2"), None, None).unwrap();
         reporter.flush().await.unwrap();
         let calls = setup.calls.lock().unwrap();
         assert_eq!((calls.enrolled, calls.renewed, calls.reported.len()), (1, 1, 2));
+        drop(calls);
+        let _ = std::fs::remove_dir_all(&setup.dir);
+    }
+
+    #[tokio::test]
+    async fn a_pass_streams_its_live_view_and_reports_its_log() {
+        use regent_sdk::ExpectedState;
+        use regent_sdk::hosts::handlers::{ConnectionMethod, TargetUser};
+        use regent_sdk::hosts::managed_host::ManagedHostBuilder;
+        use regent_sdk::task::RegentTask;
+
+        let setup = setup("live", TlsMode::ExternalCa).await;
+        let (cert, key) = setup.ca.leaf("web-01");
+        std::fs::create_dir_all(setup.dir.join("tls")).unwrap();
+        std::fs::write(&setup.config.cert_path, cert).unwrap();
+        std::fs::write(&setup.config.key_path, key).unwrap();
+        let reporter = Reporter::new(&setup.config, "web-01").unwrap();
+
+        let mut builder = ManagedHostBuilder::new(
+            "web-01",
+            "localhost",
+            Some(ConnectionMethod::Localhost(TargetUser::current_user())),
+        );
+        builder.set_host_lock(None);
+        let state = ExpectedState::from_raw_yaml(
+            "Attributes:\n  - Name: echo\n    Privilege: !None\n    Detail: !Command\n      Cmd: \"echo hello\"\n",
+        )
+        .unwrap();
+        let mut task = RegentTask::from(builder, state, Job::Assess);
+        let (sink, live) = reporter.start_live();
+        task.enable_live(Some(sink));
+        let result = task.run(None).await;
+        task.disable_live();
+        let log = live.finish().await;
+        assert!(!log.updates().is_empty());
+        reporter.record(&result, None, Some(&log)).unwrap();
+        reporter.flush().await.unwrap();
+
+        let calls = setup.calls.lock().unwrap();
+        assert_eq!(
+            calls.live.len(),
+            log.updates().len(),
+            "every update streamed"
+        );
+        assert!(calls.live.iter().all(|(host, _)| host == "web-01"));
+        assert_eq!(calls.run_logs, vec![log.updates().len()]);
         drop(calls);
         let _ = std::fs::remove_dir_all(&setup.dir);
     }
