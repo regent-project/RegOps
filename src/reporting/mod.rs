@@ -27,6 +27,20 @@ use tracing::{debug, error, info, warn};
 use crate::config::RegencyConfig;
 use spool::Spool;
 
+/// Where the expected state of a pass comes from, reported with its outcome
+/// (regency compares it with its Git sources and the host's assignment).
+#[derive(Debug, Default, Clone)]
+pub struct StateSource {
+    /// Commit of the local copy.
+    pub revision: Option<String>,
+    pub repo: String,
+    pub branch: String,
+    /// The expected state file, in the repository.
+    pub path: String,
+    /// The applied `ExpectedState`, serde JSON.
+    pub expected_state_json: Option<String>,
+}
+
 pub struct Reporter {
     config: RegencyConfig,
     host_id: String,
@@ -54,15 +68,24 @@ impl Reporter {
     pub fn record(
         &self,
         result: &RegentTaskResult,
-        source_revision: Option<String>,
+        source: &StateSource,
         run_log: Option<&RunLog>,
     ) -> Result<(), String> {
         let mut reporter = ReporterInfo::new();
         reporter.set_agent("regops");
         reporter.set_agent_version(env!("CARGO_PKG_VERSION"));
         reporter.set_sdk_version(regent_sdk::VERSION);
-        if let Some(revision) = source_revision {
-            reporter.set_source_revision(revision);
+        if let Some(revision) = &source.revision {
+            reporter.set_source_revision(revision.as_str());
+        }
+        reporter.set_source_repo(source.repo.as_str());
+        reporter.set_source_branch(source.branch.as_str());
+        reporter.set_source_path(source.path.as_str());
+        if let Some(state) = &source.expected_state_json {
+            reporter.set_expected_state_json(state.as_str());
+        }
+        for (key, value) in &self.config.labels {
+            reporter.labels_mut().insert(key.as_str(), value.as_str());
         }
         let mut request = ReportOutcomeRequest::new();
         request.set_result(result.to_proto());
@@ -203,6 +226,8 @@ mod tests {
         live: Vec<(String, u64)>,
         /// number of updates in the run log of each outcome
         run_logs: Vec<usize>,
+        /// (labels, source repo) of each outcome's reporter
+        reporters: Vec<(Vec<(String, String)>, String)>,
         enrolled: usize,
         renewed: usize,
     }
@@ -227,6 +252,14 @@ mod tests {
             }
             let mut calls = self.calls.lock().unwrap();
             calls.reported.push(host_id);
+            let reporter = request.get_ref().reporter();
+            let mut labels: Vec<(String, String)> = reporter
+                .labels()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            labels.sort();
+            calls.reporters.push((labels, reporter.source_repo().to_string()));
             if request.get_ref().has_run_log() {
                 calls.run_logs.push(request.get_ref().run_log().updates().len());
             }
@@ -331,6 +364,7 @@ mod tests {
             request_timeout_sec: 5,
             live: true,
             run_log_max_bytes: 1024 * 1024,
+            labels: [("env".to_string(), "prod".to_string())].into(),
         };
         Setup { dir, config, ca, calls }
     }
@@ -356,11 +390,27 @@ mod tests {
         std::fs::write(&setup.config.key_path, key).unwrap();
 
         let reporter = Reporter::new(&setup.config, "web-01").unwrap();
-        reporter.record(&result("web-01", "k1"), Some("abc123".to_string()), None).unwrap();
-        reporter.record(&result("someone-else", "k2"), None, None).unwrap();
+        reporter
+            .record(
+                &result("web-01", "k1"),
+                &StateSource {
+                    revision: Some("abc123".to_string()),
+                    repo: "https://git.example/infra.git".into(),
+                    ..Default::default()
+                },
+                None,
+            ).unwrap();
+        reporter.record(&result("someone-else", "k2"), &StateSource::default(), None).unwrap();
         reporter.flush().await.unwrap();
 
         assert_eq!(setup.calls.lock().unwrap().reported, vec!["web-01".to_string()]);
+        assert_eq!(
+            setup.calls.lock().unwrap().reporters[0],
+            (
+                vec![("env".to_string(), "prod".to_string())],
+                "https://git.example/infra.git".to_string()
+            )
+        );
         assert!(reporter.spool.entries().unwrap().is_empty());
         assert_eq!(setup.dir.join("spool/rejected").read_dir().unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&setup.dir);
@@ -373,7 +423,7 @@ mod tests {
 
         // no certificate yet: enrollment with the token, then the report
         let reporter = Reporter::new(&setup.config, "web-01").unwrap();
-        reporter.record(&result("web-01", "k1"), None, None).unwrap();
+        reporter.record(&result("web-01", "k1"), &StateSource::default(), None).unwrap();
         reporter.flush().await.unwrap();
         {
             let calls = setup.calls.lock().unwrap();
@@ -384,7 +434,7 @@ mod tests {
         // (the test CA issues certificates valid until 4096: use the widest window)
         setup.config.renew_before_sec = u64::MAX;
         let reporter = Reporter::new(&setup.config, "web-01").unwrap();
-        reporter.record(&result("web-01", "k2"), None, None).unwrap();
+        reporter.record(&result("web-01", "k2"), &StateSource::default(), None).unwrap();
         reporter.flush().await.unwrap();
         let calls = setup.calls.lock().unwrap();
         assert_eq!((calls.enrolled, calls.renewed, calls.reported.len()), (1, 1, 2));
@@ -423,7 +473,7 @@ mod tests {
         task.disable_live();
         let log = live.finish().await;
         assert!(!log.updates().is_empty());
-        reporter.record(&result, None, Some(&log)).unwrap();
+        reporter.record(&result, &StateSource::default(), Some(&log)).unwrap();
         reporter.flush().await.unwrap();
 
         let calls = setup.calls.lock().unwrap();

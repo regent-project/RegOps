@@ -113,6 +113,13 @@ shows it as it happens. This is best effort: nothing is retried, and the pass ne
 waits for it. The log of the pass (up to `run_log_max_bytes`, 1 MiB by default) is
 sent with its outcome, through the spool, for regency's history.
 
+Fleet model: each outcome also carries the host's labels (`labels = { env =
+"prod", role = "web" }` in `[Regency]`), which put it in regency's inventories and
+assignments, and where its expected state comes from (repository URL without
+credentials, branch, file, commit) with the state itself. regency shows whether the
+host runs the latest commit of its repository (when that repository is one of
+regency's Git sources) and whether its state matches the one its assignment gives.
+
 Client certificate (`tls_mode`):
 
 - `ExternalCa` (default): issued by your PKI; set `cert_path` / `key_path`.

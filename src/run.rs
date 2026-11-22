@@ -9,7 +9,7 @@ use tracing::{error, info, span, warn};
 use crate::common::{GitAuthentication, RunningMode, init_tracing};
 use crate::config::{RegOpsConfig, load_config};
 use crate::git::{clone_fresh, git_pull, head_commit, local_repo_matches_expected};
-use crate::reporting::Reporter;
+use crate::reporting::{Reporter, StateSource};
 
 pub async fn run_once(config_path: &str) -> Result<(), String> {
     let config = match load_config(config_path) {
@@ -91,10 +91,11 @@ pub async fn run_once(config_path: &str) -> Result<(), String> {
         None => None,
     };
 
+    let source = state_source(&config, &expected_state);
     let (result, run_log) = run_task(&config, &host_id, expected_state, reporter.as_deref()).await;
     log_outcome(&result);
     if let Some(reporter) = &reporter {
-        reporter.record(&result, head_commit(&config.git.local_path), run_log.as_ref())?;
+        reporter.record(&result, &source, run_log.as_ref())?;
         // Best effort: what cannot be sent now stays spooled for the service
         if let Err(details) = reporter.flush().await {
             warn!(details, "Outcome spooled but not reported yet");
@@ -161,10 +162,11 @@ pub async fn perform_compliance_pass(
         }
     };
 
+    let source = state_source(config, &expected_state);
     let (result, run_log) = run_task(config, host_id, expected_state, reporter).await;
     log_outcome(&result);
     if let Some(reporter) = reporter {
-        reporter.record(&result, head_commit(&config.git.local_path), run_log.as_ref())?;
+        reporter.record(&result, &source, run_log.as_ref())?;
     }
 
     Ok(())
@@ -220,5 +222,47 @@ fn log_outcome(result: &RegentTaskResult) {
             )
         }
         Err(details) => warn!(%details, "Compliance pass failed"),
+    }
+}
+
+/// What regency is told about the expected state of a pass (D28): the
+/// repository, branch, file and commit it comes from, and its content.
+fn state_source(config: &RegOpsConfig, expected_state: &ExpectedState) -> StateSource {
+    StateSource {
+        revision: head_commit(&config.git.local_path),
+        repo: config.git.repo.clone().map(|r| redact_url(&r)).unwrap_or_default(),
+        branch: config.git.branch.clone(),
+        path: config.git.expected_state_path.clone(),
+        expected_state_json: serde_json::to_string(expected_state).ok(),
+    }
+}
+
+/// A repository URL without credentials (`https://user:token@host/…`).
+fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let end = rest.find('/').unwrap_or(rest.len());
+    match rest[..end].rsplit_once('@') {
+        Some((_, host)) => format!("{scheme}://{host}{}", &rest[end..]),
+        None => url.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::redact_url;
+
+    #[test]
+    fn credentials_never_leave_the_host() {
+        assert_eq!(
+            redact_url("https://bot:secret@git.example/infra.git"),
+            "https://git.example/infra.git"
+        );
+        assert_eq!(redact_url("https://git.example/infra.git"), "https://git.example/infra.git");
+        assert_eq!(
+            redact_url("https://git.example/a@b/infra.git"),
+            "https://git.example/a@b/infra.git"
+        );
     }
 }

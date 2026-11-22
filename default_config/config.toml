@@ -61,3 +61,5 @@ auto_update = false
 # # Log of each pass sent with its outcome (bytes, estimate; 0 = none); regency
 # # may crop it further to its own "run log" setting
 # run_log_max_bytes = 1048576
+# # Labels of this host: regency puts it in the inventories they select
+# labels = { env = "prod", role = "web" }

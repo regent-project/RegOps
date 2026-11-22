@@ -196,6 +196,10 @@ pub struct RegencyConfig {
     /// 0 = no log. regency may crop it further to its own setting.
     #[serde(default = "default_run_log_max_bytes")]
     pub run_log_max_bytes: u64,
+    /// Labels of this host, sent with every outcome: regency puts the host in
+    /// the inventories (and assignments) they select.
+    #[serde(default)]
+    pub labels: std::collections::BTreeMap<String, String>,
 }
 
 impl RegencyConfig {
@@ -208,6 +212,18 @@ impl RegencyConfig {
         }
         if self.host_id.as_deref().is_some_and(|id| id.trim().is_empty()) {
             return Err("regency.host_id must not be empty when set".to_string());
+        }
+        for key in self.labels.keys() {
+            let mut chars = key.chars();
+            let valid = chars
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !valid || key == "host" || key == "source" {
+                return Err(format!(
+                    "regency.labels: invalid key {key:?} ([a-zA-Z_][a-zA-Z0-9_]*, not host or source)"
+                ));
+            }
         }
         if self.spool_max_entries == 0 {
             return Err("regency.spool_max_entries must be greater than 0".to_string());

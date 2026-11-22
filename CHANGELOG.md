@@ -1,25 +1,22 @@
-# Release v0.16.0
+# Release v0.17.0
 
 ## What's Changed
 
-### Live view in regency
+### Fleet model in regency
 
-- With `Reporting = "Regency"`, each pass runs in regent-sdk's live mode: what it does
-  (attributes, remediations, commands and their output, secrets redacted) is
-  streamed to the endpoint while it runs (`ReportLive`, best effort: the pass never
-  waits for it, and nothing is retried). New `[Regency]` key `live` (default
-  `true`).
-- The log of the pass (up to `run_log_max_bytes`, default 1 MiB, estimate; `0` =
-  none) is sent with its outcome, through the spool, for regency's history.
+- With `Reporting = "Regency"`, each outcome also tells regency where the pass's
+  expected state comes from (`[Git]` repository URL without credentials, branch and
+  file, besides the commit already sent) and the expected state itself (JSON).
+  regency shows whether the host runs the latest commit of its repository and
+  whether its state matches the one regency assigns to it.
+- New `[Regency]` key `labels` (e.g. `labels = { env = "prod", role = "web" }`):
+  the host's labels, sent with every outcome; regency puts the host in the
+  inventories (and assignments) they select. Keys are `[a-zA-Z_][a-zA-Z0-9_]*`,
+  except `host` and `source`.
 
 ### Other changes
 
-- Updated following latest regent-sdk update (v0.25.0).
-
-### Upgrade notes
-
-- Needs a regency endpoint that knows `ReportLive` (otherwise the live view is just
-  not shown; outcomes are reported as before).
+- Updated following latest regent-sdk update (v0.26.0).
 
 ## Installation
 
